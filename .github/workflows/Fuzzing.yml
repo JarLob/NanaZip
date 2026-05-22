@@ -16,6 +16,10 @@ on:
         default: ''
         type: string
 
+concurrency:
+  group: fuzzing
+  cancel-in-progress: false
+
 permissions:
   contents: read
   actions: write
