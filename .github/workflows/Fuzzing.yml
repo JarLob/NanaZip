@@ -16,6 +16,10 @@ on:
         default: ''
         type: string
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   build:
     runs-on: windows-latest
