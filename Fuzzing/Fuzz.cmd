@@ -138,14 +138,14 @@ rem Time-limited mode (CI): set FUZZ_TOTAL_SECONDS=N before calling this
 rem script. The fuzzer will stop after N seconds total. Without this env var
 rem the loop runs forever (interactive use).
 if defined FUZZ_TOTAL_SECONDS (
-    for /f %%T in ('powershell -NoProfile -c "[int](Get-Date).ToUniversalTime().Subtract([datetime]::UnixEpoch).TotalSeconds"') do set "FUZZ_START=%%T"
+    for /f %%T in ('powershell -NoProfile -c "[int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()"') do set "FUZZ_START=%%T"
     set /a "FUZZ_END=FUZZ_START + FUZZ_TOTAL_SECONDS"
 )
 set "TIME_ARG="
 
 :fuzz_loop
 if defined FUZZ_TOTAL_SECONDS (
-    for /f %%T in ('powershell -NoProfile -c "[int](Get-Date).ToUniversalTime().Subtract([datetime]::UnixEpoch).TotalSeconds"') do set "NOW=%%T"
+    for /f %%T in ('powershell -NoProfile -c "[int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()"') do set "NOW=%%T"
     if !NOW! GEQ !FUZZ_END! goto fuzz_done
     set /a "REMAINING=FUZZ_END - NOW"
     set "TIME_ARG=-max_total_time=!REMAINING!"
@@ -170,7 +170,7 @@ echo [Fuzz.cmd] Starting fuzzer (Ctrl-C to stop)...
     "%CORPUS%"
 
 if defined FUZZ_TOTAL_SECONDS (
-    for /f %%T in ('powershell -NoProfile -c "[int](Get-Date).ToUniversalTime().Subtract([datetime]::UnixEpoch).TotalSeconds"') do set "NOW=%%T"
+    for /f %%T in ('powershell -NoProfile -c "[int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()"') do set "NOW=%%T"
     if !NOW! GEQ !FUZZ_END! goto fuzz_done
 )
 
