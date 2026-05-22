@@ -5,10 +5,10 @@ on:
     - cron: '0 2 * * *'   # 02:00 UTC daily
   workflow_dispatch:
     inputs:
-      duration_hours:
-        description: 'Fuzzing duration in hours'
+      duration_minutes:
+        description: 'Fuzzing duration in minutes'
         required: false
-        default: '5'
+        default: '300'
         type: string
       formats:
         description: 'Comma-separated formats to fuzz (blank = all)'
@@ -70,8 +70,8 @@ jobs:
         id: params
         shell: pwsh
         run: |
-          $hours = if ("${{ github.event.inputs.duration_hours }}") { [int]"${{ github.event.inputs.duration_hours }}" } else { 5 }
-          echo "fuzz_seconds=$($hours * 3600)" >> $env:GITHUB_OUTPUT
+          $minutes = if ("${{ github.event.inputs.duration_minutes }}") { [int]"${{ github.event.inputs.duration_minutes }}" } else { 300 }
+          echo "fuzz_seconds=$($minutes * 60)" >> $env:GITHUB_OUTPUT
           $requested = "${{ github.event.inputs.formats }}".Trim()
           if ($requested -and ($requested -split ',' | ForEach-Object { $_.Trim() }) -notcontains "${{ matrix.format }}") {
             echo "skip=true" >> $env:GITHUB_OUTPUT
