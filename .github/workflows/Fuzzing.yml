@@ -1,0 +1,146 @@
+name: Fuzzing
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 02:00 UTC daily
+  workflow_dispatch:
+    inputs:
+      duration_hours:
+        description: 'Fuzzing duration in hours'
+        required: false
+        default: '5'
+        type: string
+      formats:
+        description: 'Comma-separated formats to fuzz (blank = all)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      POWERSHELL_TELEMETRY_OPTOUT: 1
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: microsoft/setup-msbuild@v3
+
+      - name: Build ReleaseAsan x64
+        run: MSBuild -m NanaZip.slnx /p:Configuration=ReleaseAsan /p:Platform=x64
+
+      - name: Upload fuzzer binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzzer-binaries
+          path: Output/Binaries/ReleaseAsan/x64/
+          retention-days: 3
+
+  fuzz:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: ${{ (github.event.inputs.duration_hours || 5) * 60 + 30 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        format:
+          - Ufs
+          - DotNetSingleFile
+          - ElectronAsar
+          - Romfs
+          - Zealfs
+          - WebAssembly
+          - Littlefs
+          - Avb
+          - Lvm
+    env:
+      POWERSHELL_TELEMETRY_OPTOUT: 1
+    steps:
+      - name: Check if format should run
+        id: gate
+        shell: pwsh
+        run: |
+          $requested = "${{ github.event.inputs.formats }}".Trim()
+          if ($requested -and ($requested -split ',' | ForEach-Object { $_.Trim() }) -notcontains "${{ matrix.format }}") {
+            echo "skip=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "skip=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Download fuzzer binaries
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/download-artifact@v7
+        with:
+          name: fuzzer-binaries
+          path: fuzzers
+
+      - name: Restore corpus cache
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzzers/corpus/${{ matrix.format }}
+          key: fuzz-corpus-${{ matrix.format }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.format }}-
+
+      - name: Run ${{ matrix.format }} fuzzer
+        if: steps.gate.outputs.skip == 'false'
+        shell: cmd
+        working-directory: fuzzers
+        env:
+          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0
+          FUZZ_TOTAL_SECONDS: ${{ (github.event.inputs.duration_hours || 5) * 3600 }}
+        run: Fuzz.cmd ${{ matrix.format }}
+
+      - name: Check for crashes
+        if: steps.gate.outputs.skip == 'false'
+        id: check_crashes
+        shell: pwsh
+        run: |
+          $crashDir = "fuzzers\crashes\${{ matrix.format }}"
+          $crashes = @()
+          if (Test-Path $crashDir) {
+            $crashes = Get-ChildItem $crashDir -Filter 'crash-*' -File
+          }
+          if ($crashes.Count -gt 0) {
+            Write-Host "::error::Found $($crashes.Count) crash(es) for ${{ matrix.format }}:"
+            $crashes | ForEach-Object { Write-Host "  $_" }
+            echo "has_crashes=true" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "No crashes found for ${{ matrix.format }}"
+            echo "has_crashes=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Upload crash artifacts
+        if: steps.check_crashes.outputs.has_crashes == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: crashes-${{ matrix.format }}
+          path: fuzzers/crashes/${{ matrix.format }}/crash-*
+          retention-days: 90
+
+      - name: Minimize corpus
+        if: steps.gate.outputs.skip == 'false' && !cancelled()
+        shell: cmd
+        working-directory: fuzzers
+        env:
+          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0
+        run: |
+          set "FORMAT=${{ matrix.format }}"
+          set "CORPUS=corpus\%FORMAT%"
+          set "MIN=corpus\%FORMAT%-min"
+          mkdir "%MIN%"
+          Fuzz.%FORMAT%.exe -merge=1 "%MIN%" "%CORPUS%"
+          rmdir /s /q "%CORPUS%"
+          ren "%MIN%" "%FORMAT%"
+
+      - name: Save corpus cache
+        if: steps.gate.outputs.skip == 'false' && !cancelled()
+        uses: actions/cache/save@v4
+        with:
+          path: fuzzers/corpus/${{ matrix.format }}
+          key: fuzz-corpus-${{ matrix.format }}-${{ github.run_id }}
+
+      - name: Fail if crashes found
+        if: steps.check_crashes.outputs.has_crashes == 'true'
+        run: exit 1
