@@ -39,7 +39,7 @@ jobs:
   fuzz:
     needs: build
     runs-on: windows-latest
-    timeout-minutes: ${{ (github.event.inputs.duration_hours || 5) * 60 + 30 }}
+    timeout-minutes: 330
     strategy:
       fail-fast: false
       matrix:
@@ -56,10 +56,12 @@ jobs:
     env:
       POWERSHELL_TELEMETRY_OPTOUT: 1
     steps:
-      - name: Check if format should run
-        id: gate
+      - name: Compute parameters
+        id: params
         shell: pwsh
         run: |
+          $hours = if ("${{ github.event.inputs.duration_hours }}") { [int]"${{ github.event.inputs.duration_hours }}" } else { 5 }
+          echo "fuzz_seconds=$($hours * 3600)" >> $env:GITHUB_OUTPUT
           $requested = "${{ github.event.inputs.formats }}".Trim()
           if ($requested -and ($requested -split ',' | ForEach-Object { $_.Trim() }) -notcontains "${{ matrix.format }}") {
             echo "skip=true" >> $env:GITHUB_OUTPUT
@@ -68,14 +70,14 @@ jobs:
           }
 
       - name: Download fuzzer binaries
-        if: steps.gate.outputs.skip == 'false'
+        if: steps.params.outputs.skip == 'false'
         uses: actions/download-artifact@v7
         with:
           name: fuzzer-binaries
           path: fuzzers
 
       - name: Restore corpus cache
-        if: steps.gate.outputs.skip == 'false'
+        if: steps.params.outputs.skip == 'false'
         uses: actions/cache/restore@v4
         with:
           path: fuzzers/corpus/${{ matrix.format }}
@@ -84,16 +86,16 @@ jobs:
             fuzz-corpus-${{ matrix.format }}-
 
       - name: Run ${{ matrix.format }} fuzzer
-        if: steps.gate.outputs.skip == 'false'
+        if: steps.params.outputs.skip == 'false'
         shell: cmd
         working-directory: fuzzers
         env:
           ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0
-          FUZZ_TOTAL_SECONDS: ${{ (github.event.inputs.duration_hours || 5) * 3600 }}
+          FUZZ_TOTAL_SECONDS: ${{ steps.params.outputs.fuzz_seconds }}
         run: Fuzz.cmd ${{ matrix.format }}
 
       - name: Check for crashes
-        if: steps.gate.outputs.skip == 'false'
+        if: steps.params.outputs.skip == 'false'
         id: check_crashes
         shell: pwsh
         run: |
@@ -120,7 +122,7 @@ jobs:
           retention-days: 90
 
       - name: Minimize corpus
-        if: steps.gate.outputs.skip == 'false' && !cancelled()
+        if: steps.params.outputs.skip == 'false' && !cancelled()
         shell: cmd
         working-directory: fuzzers
         env:
@@ -135,7 +137,7 @@ jobs:
           ren "%MIN%" "%FORMAT%"
 
       - name: Save corpus cache
-        if: steps.gate.outputs.skip == 'false' && !cancelled()
+        if: steps.params.outputs.skip == 'false' && !cancelled()
         uses: actions/cache/save@v4
         with:
           path: fuzzers/corpus/${{ matrix.format }}
