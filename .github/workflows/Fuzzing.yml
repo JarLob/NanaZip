@@ -31,7 +31,9 @@ jobs:
       - uses: microsoft/setup-msbuild@v3
 
       - name: Build ReleaseAsan x64
-        run: MSBuild -m NanaZip.slnx /p:Configuration=ReleaseAsan /p:Platform=x64
+        run: |
+          MSBuild -m NanaZip.Codecs\NanaZip.Codecs.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
+          MSBuild -m NanaZip.Core\NanaZip.Core.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
 
       - name: Upload fuzzer binaries
         uses: actions/upload-artifact@v7
