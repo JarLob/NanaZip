@@ -162,7 +162,7 @@ jobs:
         run: ./Fuzz.ps1 -Format ${{ matrix.format }} -TotalSeconds ${{ steps.params.outputs.fuzz_seconds }}${{ steps.params.outputs.no_print_asan == 'true' && ' -NoPrintAsan' || '' }}
 
       - name: Check for crashes
-        if: steps.params.outputs.skip == 'false'
+        if: always() && steps.params.outputs.skip == 'false'
         id: check_crashes
         shell: pwsh
         run: |
@@ -252,7 +252,7 @@ jobs:
       # complete ASan trace. Non-reproducible crashes are logged from the
       # fork-mode ASan log files captured during the original crash.
       - name: Reproduce crashes for stack traces
-        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr != 'true'
+        if: always() && steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr != 'true'
         shell: pwsh
         working-directory: fuzzers
         env:
@@ -282,6 +282,7 @@ jobs:
 
       - name: Package crash artifacts (with optional encryption)
         if: |
+          always() &&
           steps.check_crashes.outputs.has_crashes == 'true' &&
           (steps.params.outputs.is_pr != 'true' || steps.filter_crashes.outputs.has_new_crashes == 'true')
         id: package_crashes
@@ -305,6 +306,7 @@ jobs:
 
       - name: Upload crash artifacts
         if: |
+          always() &&
           steps.check_crashes.outputs.has_crashes == 'true' &&
           (steps.params.outputs.is_pr != 'true' || steps.filter_crashes.outputs.has_new_crashes == 'true')
         uses: actions/upload-artifact@v7
@@ -315,6 +317,7 @@ jobs:
 
       - name: Upload fuzzer binaries for crash reproduction
         if: |
+          always() &&
           steps.check_crashes.outputs.has_crashes == 'true' &&
           (steps.params.outputs.is_pr != 'true' || steps.filter_crashes.outputs.has_new_crashes == 'true')
         uses: actions/upload-artifact@v7
@@ -324,7 +327,7 @@ jobs:
           retention-days: 90
 
       - name: Minimize corpus
-        if: steps.params.outputs.skip == 'false' && steps.params.outputs.is_pr != 'true' && !cancelled()
+        if: always() && steps.params.outputs.skip == 'false' && steps.params.outputs.is_pr != 'true'
         shell: pwsh
         working-directory: fuzzers
         env:
@@ -339,7 +342,7 @@ jobs:
           Rename-Item -Path $min -NewName $format
 
       - name: Save corpus cache
-        if: steps.params.outputs.skip == 'false' && steps.params.outputs.is_pr != 'true' && !cancelled()
+        if: always() && steps.params.outputs.skip == 'false' && steps.params.outputs.is_pr != 'true'
         uses: actions/cache/save@v5
         with:
           path: fuzzers/corpus/${{ matrix.format }}
