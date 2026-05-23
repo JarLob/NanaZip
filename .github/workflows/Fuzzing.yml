@@ -99,18 +99,24 @@ jobs:
       - name: Compute parameters
         id: params
         shell: pwsh
+        env:
+          INPUT_DURATION: ${{ github.event.inputs.duration_minutes }}
+          INPUT_FORMATS: ${{ github.event.inputs.formats }}
+          EVENT_NAME: ${{ github.event_name }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+          MATRIX_FORMAT: ${{ matrix.format }}
         run: |
-          if ("${{ github.event_name }}" -eq "pull_request") {
+          if ($env:EVENT_NAME -eq "pull_request") {
             $minutes = $env:PR_DURATION_MINUTES
-          } elseif ("${{ github.event.inputs.duration_minutes }}") {
-            $minutes = [int]"${{ github.event.inputs.duration_minutes }}"
+          } elseif ($env:INPUT_DURATION) {
+            $minutes = [int]$env:INPUT_DURATION
           } else {
             $minutes = $env:DEFAULT_DURATION_MINUTES
           }
           echo "fuzz_seconds=$($minutes * 60)" >> $env:GITHUB_OUTPUT
-          echo "is_pr=${{ github.event_name == 'pull_request' }}" >> $env:GITHUB_OUTPUT
-          $requested = "${{ github.event.inputs.formats }}".Trim()
-          if ($requested -and ($requested -split ',' | ForEach-Object { $_.Trim() }) -notcontains "${{ matrix.format }}") {
+          echo "is_pr=$env:IS_PR" >> $env:GITHUB_OUTPUT
+          $requested = ($env:INPUT_FORMATS ?? '').Trim()
+          if ($requested -and ($requested -split ',' | ForEach-Object { $_.Trim() }) -notcontains $env:MATRIX_FORMAT) {
             echo "skip=true" >> $env:GITHUB_OUTPUT
           } else {
             echo "skip=false" >> $env:GITHUB_OUTPUT
@@ -126,8 +132,8 @@ jobs:
 
       - name: Prepare fuzzers directory
         if: steps.params.outputs.skip == 'false'
-        shell: cmd
-        run: xcopy Output\Binaries\ReleaseAsan\x64 fuzzers\ /s /e /q
+        shell: pwsh
+        run: Copy-Item -Path Output/Binaries/ReleaseAsan/x64/* -Destination fuzzers/ -Recurse -Force
 
       - name: Restore corpus cache
         if: steps.params.outputs.skip == 'false'
@@ -140,13 +146,9 @@ jobs:
 
       - name: Run ${{ matrix.format }} fuzzer
         if: steps.params.outputs.skip == 'false'
-        shell: cmd
+        shell: pwsh
         working-directory: fuzzers
-        env:
-          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0:log_path=crashes/${{ matrix.format }}/asan
-          FUZZ_TOTAL_SECONDS: ${{ steps.params.outputs.fuzz_seconds }}
-          FUZZ_PRINT_ASAN: ${{ steps.params.outputs.is_pr == 'true' && '0' || '1' }}
-        run: Fuzz.cmd ${{ matrix.format }}
+        run: ./Fuzz.ps1 -Format ${{ matrix.format }} -TotalSeconds ${{ steps.params.outputs.fuzz_seconds }}${{ steps.params.outputs.is_pr == 'true' && ' -NoPrintAsan' || '' }}
 
       - name: Check for crashes
         if: steps.params.outputs.skip == 'false'
@@ -311,18 +313,18 @@ jobs:
 
       - name: Minimize corpus
         if: steps.params.outputs.skip == 'false' && steps.params.outputs.is_pr != 'true' && !cancelled()
-        shell: cmd
+        shell: pwsh
         working-directory: fuzzers
         env:
           ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0
         run: |
-          set "FORMAT=${{ matrix.format }}"
-          set "CORPUS=corpus\%FORMAT%"
-          set "MIN=corpus\%FORMAT%-min"
-          mkdir "%MIN%"
-          Fuzz.%FORMAT%.exe -merge=1 "%MIN%" "%CORPUS%"
-          rmdir /s /q "%CORPUS%"
-          ren "%MIN%" "%FORMAT%"
+          $format = "${{ matrix.format }}"
+          $corpus = "corpus/$format"
+          $min = "corpus/${format}-min"
+          New-Item -ItemType Directory -Path $min -Force | Out-Null
+          & "./Fuzz.$format.exe" -merge=1 $min $corpus
+          Remove-Item -Path $corpus -Recurse -Force
+          Rename-Item -Path $min -NewName $format
 
       - name: Save corpus cache
         if: steps.params.outputs.skip == 'false' && steps.params.outputs.is_pr != 'true' && !cancelled()

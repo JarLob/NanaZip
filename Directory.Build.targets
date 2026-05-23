@@ -115,7 +115,7 @@
           DestinationFolder="$(OutDir)dict"
           SkipUnchangedFiles="true"
           Condition="Exists('$(_FuzzDir)dict\%(FuzzHarness.Identity).dict')" />
-    <Copy SourceFiles="$(_FuzzDir)Fuzz.cmd" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(_FuzzDir)Fuzz.ps1" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(_FuzzDir)Minimize.cmd" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
   </Target>
 </Project>
