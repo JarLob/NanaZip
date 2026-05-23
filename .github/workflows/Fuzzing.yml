@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2025
     env:
       POWERSHELL_TELEMETRY_OPTOUT: 1
     steps:
@@ -48,7 +48,7 @@ jobs:
 
   fuzz:
     needs: build
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 330
     strategy:
       fail-fast: false
@@ -88,7 +88,7 @@ jobs:
 
       - name: Restore corpus cache
         if: steps.params.outputs.skip == 'false'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: fuzzers/corpus/${{ matrix.format }}
           key: fuzz-corpus-${{ matrix.format }}-${{ github.run_id }}
@@ -180,7 +180,7 @@ jobs:
 
       - name: Save corpus cache
         if: steps.params.outputs.skip == 'false' && !cancelled()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: fuzzers/corpus/${{ matrix.format }}
           key: fuzz-corpus-${{ matrix.format }}-${{ github.run_id }}
