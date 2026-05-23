@@ -179,16 +179,19 @@ if defined FUZZ_TOTAL_SECONDS (
 )
 
 rem Print any new ASan stack-trace logs since last iteration.
-set "ASAN_COUNT=0"
-for %%F in ("%OUT%\asan.*") do set /a "ASAN_COUNT+=1"
-if !ASAN_COUNT! GTR !ASAN_PRINTED! (
-    echo [Fuzz.cmd] === New ASan reports ^(!ASAN_COUNT! total^) ===
-    set "IDX=0"
-    for %%F in ("%OUT%\asan.*") do (
-        set /a "IDX+=1"
-        if !IDX! GTR !ASAN_PRINTED! type "%%F"
+rem Set FUZZ_PRINT_ASAN=0 to suppress (e.g. PR runs where traces must not leak).
+if not "%FUZZ_PRINT_ASAN%"=="0" (
+    set "ASAN_COUNT=0"
+    for %%F in ("%OUT%\asan.*") do set /a "ASAN_COUNT+=1"
+    if !ASAN_COUNT! GTR !ASAN_PRINTED! (
+        echo [Fuzz.cmd] === New ASan reports ^(!ASAN_COUNT! total^) ===
+        set "IDX=0"
+        for %%F in ("%OUT%\asan.*") do (
+            set /a "IDX+=1"
+            if !IDX! GTR !ASAN_PRINTED! type "%%F"
+        )
+        set "ASAN_PRINTED=!ASAN_COUNT!"
     )
-    set "ASAN_PRINTED=!ASAN_COUNT!"
 )
 
 set "FUZZ_EXIT=%ERRORLEVEL%"

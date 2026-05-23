@@ -15,14 +15,26 @@ on:
         required: false
         default: ''
         type: string
+  pull_request:
+    paths:
+      - 'NanaZip.Codecs/**'
+      - 'NanaZip.Core/**'
+      - 'Fuzzing/**'
+      - '**/*.vcxproj'
+      - '**/*.props'
+      - '**/*.targets'
 
 concurrency:
-  group: fuzzing
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('fuzzing-pr-{0}', github.event.pull_request.number) || 'fuzzing' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read   # checkout repository
   actions: write   # save build output and corpus caches
+
+env:
+  DEFAULT_DURATION_MINUTES: 300
+  PR_DURATION_MINUTES: 10
 
 jobs:
   build:
@@ -88,8 +100,15 @@ jobs:
         id: params
         shell: pwsh
         run: |
-          $minutes = if ("${{ github.event.inputs.duration_minutes }}") { [int]"${{ github.event.inputs.duration_minutes }}" } else { 300 }
+          if ("${{ github.event_name }}" -eq "pull_request") {
+            $minutes = $env:PR_DURATION_MINUTES
+          } elseif ("${{ github.event.inputs.duration_minutes }}") {
+            $minutes = [int]"${{ github.event.inputs.duration_minutes }}"
+          } else {
+            $minutes = $env:DEFAULT_DURATION_MINUTES
+          }
           echo "fuzz_seconds=$($minutes * 60)" >> $env:GITHUB_OUTPUT
+          echo "is_pr=${{ github.event_name == 'pull_request' }}" >> $env:GITHUB_OUTPUT
           $requested = "${{ github.event.inputs.formats }}".Trim()
           if ($requested -and ($requested -split ',' | ForEach-Object { $_.Trim() }) -notcontains "${{ matrix.format }}") {
             echo "skip=true" >> $env:GITHUB_OUTPUT
@@ -126,6 +145,7 @@ jobs:
         env:
           ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0:log_path=crashes/${{ matrix.format }}/asan
           FUZZ_TOTAL_SECONDS: ${{ steps.params.outputs.fuzz_seconds }}
+          FUZZ_PRINT_ASAN: ${{ steps.params.outputs.is_pr == 'true' && '0' || '1' }}
         run: Fuzz.cmd ${{ matrix.format }}
 
       - name: Check for crashes
@@ -147,8 +167,76 @@ jobs:
             echo "has_crashes=false" >> $env:GITHUB_OUTPUT
           }
 
+      # --- PR: verify crashes against base branch so we don't report pre-existing crashes ---
+      - name: Checkout base branch for crash verification
+        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base-src
+
+      - name: Compute base build cache key
+        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr == 'true'
+        id: base-cache-key
+        shell: pwsh
+        working-directory: base-src
+        run: |
+          echo "key=build-asan-x64-${{ hashFiles('base-src/NanaZip.Codecs/**', 'base-src/NanaZip.Core/**', 'base-src/Fuzzing/**', 'base-src/Directory.Build.*', 'base-src/**/*.vcxproj', 'base-src/**/*.props', 'base-src/**/*.targets') }}" >> $env:GITHUB_OUTPUT
+
+      - name: Cache base build output
+        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr == 'true'
+        id: base-build-cache
+        uses: actions/cache@v5
+        with:
+          path: base-src/Output/Binaries/ReleaseAsan/x64/
+          key: ${{ steps.base-cache-key.outputs.key }}
+
+      - name: Setup MSBuild for base build
+        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr == 'true' && steps.base-build-cache.outputs.cache-hit != 'true'
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Build base branch binaries
+        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr == 'true' && steps.base-build-cache.outputs.cache-hit != 'true'
+        working-directory: base-src
+        run: |
+          MSBuild -m NanaZip.Codecs\NanaZip.Codecs.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
+          MSBuild -m NanaZip.Core\NanaZip.Core.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
+
+      - name: Filter out pre-existing crashes
+        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr == 'true'
+        id: filter_crashes
+        shell: pwsh
+        env:
+          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0
+        run: |
+          $baseExe = "base-src/Output/Binaries/ReleaseAsan/x64/Fuzz.${{ matrix.format }}.exe"
+          $crashDir = "fuzzers/crashes/${{ matrix.format }}"
+          $newDir = "fuzzers/crashes-new/${{ matrix.format }}"
+          New-Item -ItemType Directory -Path $newDir -Force | Out-Null
+          $newCount = 0
+          Get-ChildItem $crashDir -Filter 'crash-*' -File | ForEach-Object {
+            $p = Start-Process -FilePath $baseExe -ArgumentList $_.FullName `
+              -NoNewWindow -PassThru -Wait
+            if ($p.ExitCode -eq 0) {
+              Write-Host "NEW crash (not in base): $($_.Name)"
+              Copy-Item $_.FullName $newDir
+              $newCount++
+            } else {
+              Write-Host "Pre-existing crash (reproduces on base): $($_.Name) - skipping"
+            }
+          }
+          # Also copy ASan logs for new crashes
+          if ($newCount -gt 0) {
+            Get-ChildItem $crashDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue |
+              Copy-Item -Destination $newDir
+          }
+          echo "new_crashes=$newCount" >> $env:GITHUB_OUTPUT
+          echo "has_new_crashes=$($newCount -gt 0 ? 'true' : 'false')" >> $env:GITHUB_OUTPUT
+          Write-Host "New crashes: $newCount"
+
+      # --- Non-PR: print full diagnostics ---
       - name: Print ASan stack traces
-        if: steps.check_crashes.outputs.has_crashes == 'true'
+        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr != 'true'
         shell: pwsh
         run: |
           $crashDir = "fuzzers\crashes\${{ matrix.format }}"
@@ -163,7 +251,7 @@ jobs:
           }
 
       - name: Reproduce crashes for stack traces
-        if: steps.check_crashes.outputs.has_crashes == 'true'
+        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr != 'true'
         shell: pwsh
         working-directory: fuzzers
         env:
@@ -177,14 +265,19 @@ jobs:
             Write-Host "Exit code: $($p.ExitCode)"
           }
 
+      # --- Upload crash artifacts ---
       - name: Package crash artifacts
-        if: steps.check_crashes.outputs.has_crashes == 'true'
+        if: |
+          steps.check_crashes.outputs.has_crashes == 'true' &&
+          (steps.params.outputs.is_pr != 'true' || steps.filter_crashes.outputs.has_new_crashes == 'true')
         id: package_crashes
         shell: pwsh
         env:
           CRASH_KEY: ${{ secrets.CRASH_KEY }}
         run: |
-          $crashDir = "fuzzers/crashes/${{ matrix.format }}"
+          # For PRs, only package new crashes; for non-PR, package all
+          $isPr = "${{ steps.params.outputs.is_pr }}" -eq "true"
+          $crashDir = if ($isPr) { "fuzzers/crashes-new/${{ matrix.format }}" } else { "fuzzers/crashes/${{ matrix.format }}" }
           if ($env:CRASH_KEY) {
             7z a -p"$env:CRASH_KEY" -mhe=on "crashes-${{ matrix.format }}.7z" "$crashDir/crash-*" "$crashDir/asan.*"
             echo "artifact_path=crashes-${{ matrix.format }}.7z" >> $env:GITHUB_OUTPUT
@@ -197,7 +290,9 @@ jobs:
           }
 
       - name: Upload crash artifacts
-        if: steps.check_crashes.outputs.has_crashes == 'true'
+        if: |
+          steps.check_crashes.outputs.has_crashes == 'true' &&
+          (steps.params.outputs.is_pr != 'true' || steps.filter_crashes.outputs.has_new_crashes == 'true')
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package_crashes.outputs.artifact_name }}
@@ -205,7 +300,9 @@ jobs:
           retention-days: 90
 
       - name: Upload fuzzer binaries for crash reproduction
-        if: steps.check_crashes.outputs.has_crashes == 'true'
+        if: |
+          steps.check_crashes.outputs.has_crashes == 'true' &&
+          (steps.params.outputs.is_pr != 'true' || steps.filter_crashes.outputs.has_new_crashes == 'true')
         uses: actions/upload-artifact@v7
         with:
           name: fuzzer-binaries-${{ matrix.format }}
@@ -213,7 +310,7 @@ jobs:
           retention-days: 90
 
       - name: Minimize corpus
-        if: steps.params.outputs.skip == 'false' && !cancelled()
+        if: steps.params.outputs.skip == 'false' && steps.params.outputs.is_pr != 'true' && !cancelled()
         shell: cmd
         working-directory: fuzzers
         env:
@@ -228,12 +325,14 @@ jobs:
           ren "%MIN%" "%FORMAT%"
 
       - name: Save corpus cache
-        if: steps.params.outputs.skip == 'false' && !cancelled()
+        if: steps.params.outputs.skip == 'false' && steps.params.outputs.is_pr != 'true' && !cancelled()
         uses: actions/cache/save@v5
         with:
           path: fuzzers/corpus/${{ matrix.format }}
           key: fuzz-corpus-${{ matrix.format }}-${{ github.run_id }}
 
       - name: Fail if crashes found
-        if: steps.check_crashes.outputs.has_crashes == 'true'
+        if: |
+          (steps.params.outputs.is_pr != 'true' && steps.check_crashes.outputs.has_crashes == 'true') ||
+          (steps.params.outputs.is_pr == 'true' && steps.filter_crashes.outputs.has_new_crashes == 'true')
         run: exit 1
