@@ -2,7 +2,7 @@ name: Fuzzing
 
 on:
   schedule:
-    - cron: '0 2 * * *'   # 02:00 UTC daily
+    - cron: '0 14 * * *'   # 14:00 UTC daily
   workflow_dispatch:
     inputs:
       duration_minutes:
