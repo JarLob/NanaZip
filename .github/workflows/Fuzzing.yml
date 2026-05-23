@@ -269,8 +269,7 @@ jobs:
           }
           Write-Host "`nReproduced: $reproduced, Non-reproducible: $failed"
 
-      # --- Upload crash artifacts ---
-      - name: Package crash artifacts
+      - name: Package crash artifacts (with optional encryption)
         if: |
           steps.check_crashes.outputs.has_crashes == 'true' &&
           (steps.params.outputs.is_pr != 'true' || steps.filter_crashes.outputs.has_new_crashes == 'true')
