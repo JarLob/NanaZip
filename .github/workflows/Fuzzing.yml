@@ -81,8 +81,52 @@ jobs:
           MSBuild -m NanaZip.Codecs\NanaZip.Codecs.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
           MSBuild -m NanaZip.Core\NanaZip.Core.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
 
+  # Build base-branch binaries in parallel (PR only) so fuzz legs
+  # don't each have to build them when crashes are found.
+  build-base:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    outputs:
+      cache-key: ${{ steps.cache-key.outputs.key }}
+    env:
+      POWERSHELL_TELEMETRY_OPTOUT: 1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Compute build cache key
+        id: cache-key
+        shell: pwsh
+        run: |
+          echo "key=build-asan-x64-${{ hashFiles('NanaZip.Codecs/**', 'NanaZip.Core/**', 'Fuzzing/**', 'Directory.Build.*', '**/*.vcxproj', '**/*.props', '**/*.targets') }}" >> $env:GITHUB_OUTPUT
+
+      - name: Cache build output
+        id: build-cache
+        uses: actions/cache@v5
+        with:
+          path: Output/Binaries/ReleaseAsan/x64/
+          key: ${{ steps.cache-key.outputs.key }}
+
+      - uses: microsoft/setup-msbuild@v3
+        if: steps.build-cache.outputs.cache-hit != 'true'
+
+      - name: Cache NuGet packages
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ hashFiles('**/*.vcxproj', '**/packages.config', '**/Directory.Packages.props') }}
+          restore-keys: nuget-
+
+      - name: Build ReleaseAsan x64
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        run: |
+          MSBuild -m NanaZip.Codecs\NanaZip.Codecs.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
+          MSBuild -m NanaZip.Core\NanaZip.Core.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
+
   fuzz:
-    needs: build
+    needs: [build, build-base]
     runs-on: windows-latest
     timeout-minutes: 330
     strategy:
@@ -181,39 +225,14 @@ jobs:
           }
 
       # --- PR: verify crashes against base branch so we don't report pre-existing crashes ---
-      - name: Checkout base branch for crash verification
+      # Safe to overwrite Output/ — PR binaries were already copied to fuzzers/.
+      - name: Restore base build cache
         if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr == 'true'
-        uses: actions/checkout@v6
+        uses: actions/cache/restore@v5
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: base-src
-
-      - name: Compute base build cache key
-        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr == 'true'
-        id: base-cache-key
-        shell: pwsh
-        working-directory: base-src
-        run: |
-          echo "key=build-asan-x64-${{ hashFiles('base-src/NanaZip.Codecs/**', 'base-src/NanaZip.Core/**', 'base-src/Fuzzing/**', 'base-src/Directory.Build.*', 'base-src/**/*.vcxproj', 'base-src/**/*.props', 'base-src/**/*.targets') }}" >> $env:GITHUB_OUTPUT
-
-      - name: Cache base build output
-        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr == 'true'
-        id: base-build-cache
-        uses: actions/cache@v5
-        with:
-          path: base-src/Output/Binaries/ReleaseAsan/x64/
-          key: ${{ steps.base-cache-key.outputs.key }}
-
-      - name: Setup MSBuild for base build
-        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr == 'true' && steps.base-build-cache.outputs.cache-hit != 'true'
-        uses: microsoft/setup-msbuild@v3
-
-      - name: Build base branch binaries
-        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr == 'true' && steps.base-build-cache.outputs.cache-hit != 'true'
-        working-directory: base-src
-        run: |
-          MSBuild -m NanaZip.Codecs\NanaZip.Codecs.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
-          MSBuild -m NanaZip.Core\NanaZip.Core.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
+          path: Output/Binaries/ReleaseAsan/x64/
+          key: ${{ needs.build-base.outputs.cache-key }}
+          fail-on-cache-miss: true
 
       - name: Filter out pre-existing crashes
         if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr == 'true'
@@ -222,7 +241,7 @@ jobs:
         env:
           ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0
         run: |
-          $baseExe = "base-src/Output/Binaries/ReleaseAsan/x64/Fuzz.${{ matrix.format }}.exe"
+          $baseExe = "Output/Binaries/ReleaseAsan/x64/Fuzz.${{ matrix.format }}.exe"
           $crashDir = "fuzzers/crashes/${{ matrix.format }}"
           $newDir = "fuzzers/crashes-new/${{ matrix.format }}"
           New-Item -ItemType Directory -Path $newDir -Force | Out-Null
