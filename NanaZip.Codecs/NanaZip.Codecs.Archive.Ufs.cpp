@@ -838,7 +838,7 @@ namespace NanaZip::Codecs::Archive
                     }
 
                     std::uint32_t InodePerCylinderGroup = this->ReadUInt32(
-                        &this->m_SuperBlock.fs_ipg);
+                        &this->m_SuperBlock.fs_ipg) + 1;
                     if (0 == InodePerCylinderGroup)
                     {
                         continue;
