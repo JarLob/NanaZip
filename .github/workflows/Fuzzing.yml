@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-2025
+    runs-on: windows-2025-vs2026
     env:
       POWERSHELL_TELEMETRY_OPTOUT: 1
     steps:
@@ -48,7 +48,7 @@ jobs:
 
   fuzz:
     needs: build
-    runs-on: windows-2025
+    runs-on: windows-2025-vs2026
     timeout-minutes: 330
     strategy:
       fail-fast: false
