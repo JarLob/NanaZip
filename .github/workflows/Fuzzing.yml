@@ -315,17 +315,6 @@ jobs:
           path: ${{ steps.package_crashes.outputs.artifact_path }}
           retention-days: 90
 
-      - name: Upload fuzzer binaries for crash reproduction
-        if: |
-          always() &&
-          steps.check_crashes.outputs.has_crashes == 'true' &&
-          (steps.params.outputs.is_pr != 'true' || steps.filter_crashes.outputs.has_new_crashes == 'true')
-        uses: actions/upload-artifact@v7
-        with:
-          name: fuzzer-binaries-${{ matrix.format }}
-          path: Output/Binaries/ReleaseAsan/x64/
-          retention-days: 90
-
       - name: Minimize corpus
         if: always() && steps.params.outputs.skip == 'false' && steps.params.outputs.is_pr != 'true'
         shell: pwsh
@@ -353,3 +342,23 @@ jobs:
           (steps.params.outputs.is_pr != 'true' && steps.check_crashes.outputs.has_crashes == 'true') ||
           (steps.params.outputs.is_pr == 'true' && steps.filter_crashes.outputs.has_new_crashes == 'true')
         run: exit 1
+
+  # Upload fuzzer binaries once (shared across all formats) when any fuzz
+  # matrix leg failed due to crashes.
+  upload-binaries:
+    needs: [build, fuzz]
+    runs-on: windows-latest
+    if: always() && needs.fuzz.result == 'failure'
+    steps:
+      - name: Restore build cache
+        uses: actions/cache/restore@v5
+        with:
+          path: Output/Binaries/ReleaseAsan/x64/
+          key: ${{ needs.build.outputs.cache-key }}
+
+      - name: Upload fuzzer binaries for crash reproduction
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzzer-binaries
+          path: Output/Binaries/ReleaseAsan/x64/
+          retention-days: 90
