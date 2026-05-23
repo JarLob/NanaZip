@@ -153,14 +153,31 @@ jobs:
             Write-Host "Exit code: $($p.ExitCode)"
           }
 
+      - name: Package crash artifacts
+        if: steps.check_crashes.outputs.has_crashes == 'true'
+        id: package_crashes
+        shell: pwsh
+        env:
+          CRASH_KEY: ${{ secrets.CRASH_KEY }}
+        run: |
+          $crashDir = "fuzzers/crashes/${{ matrix.format }}"
+          if ($env:CRASH_KEY) {
+            7z a -p"$env:CRASH_KEY" -mhe=on "crashes-${{ matrix.format }}.7z" "$crashDir/crash-*" "$crashDir/asan.*"
+            echo "artifact_path=crashes-${{ matrix.format }}.7z" >> $env:GITHUB_OUTPUT
+            echo "artifact_name=crashes-${{ matrix.format }}-encrypted" >> $env:GITHUB_OUTPUT
+            Write-Host "Crash artifacts encrypted"
+          } else {
+            Write-Host "::warning::CRASH_KEY secret not set, uploading unencrypted"
+            echo "artifact_path=$crashDir" >> $env:GITHUB_OUTPUT
+            echo "artifact_name=crashes-${{ matrix.format }}" >> $env:GITHUB_OUTPUT
+          }
+
       - name: Upload crash artifacts
         if: steps.check_crashes.outputs.has_crashes == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: crashes-${{ matrix.format }}
-          path: |
-            fuzzers/crashes/${{ matrix.format }}/crash-*
-            fuzzers/crashes/${{ matrix.format }}/asan.*
+          name: ${{ steps.package_crashes.outputs.artifact_name }}
+          path: ${{ steps.package_crashes.outputs.artifact_path }}
           retention-days: 90
 
       - name: Minimize corpus
