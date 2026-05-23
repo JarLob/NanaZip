@@ -32,9 +32,26 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Cache build output
+        id: build-cache
+        uses: actions/cache@v4
+        with:
+          path: Output/Binaries/ReleaseAsan/x64/
+          key: build-asan-x64-${{ hashFiles('NanaZip.Codecs/**', 'NanaZip.Core/**', 'Fuzzing/**', 'Directory.Build.*', '**/*.vcxproj', '**/*.props', '**/*.targets') }}
+
       - uses: microsoft/setup-msbuild@v3
+        if: steps.build-cache.outputs.cache-hit != 'true'
+
+      - name: Cache NuGet packages
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ hashFiles('**/*.vcxproj', '**/packages.config', '**/Directory.Packages.props') }}
+          restore-keys: nuget-
 
       - name: Build ReleaseAsan x64
+        if: steps.build-cache.outputs.cache-hit != 'true'
         run: |
           MSBuild -m NanaZip.Codecs\NanaZip.Codecs.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
           MSBuild -m NanaZip.Core\NanaZip.Core.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
