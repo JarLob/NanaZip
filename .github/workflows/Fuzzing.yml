@@ -171,10 +171,9 @@ jobs:
           } else {
             echo "skip=false" >> $env:GITHUB_OUTPUT
           }
-          # PRs never print ASan; schedule/dispatch respect the input (default: true)
-          $noAsan = if ($env:IS_PR -eq 'true') { 'true' }
-                    elseif ($env:INPUT_PRINT_ASAN -eq 'false') { 'true' }
-                    else { 'false' }
+          # Scheduled run logs are public, PRs may reproduce already found crash in the base repo — only print ASan for explicit dispatch opt-in
+          $noAsan = if ($env:INPUT_PRINT_ASAN -eq 'true') { 'false' }
+                    else { 'true' }
           echo "no_print_asan=$noAsan" >> $env:GITHUB_OUTPUT
 
       - name: Restore build cache
@@ -239,7 +238,7 @@ jobs:
         id: filter_crashes
         shell: pwsh
         env:
-          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0
+          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0:log_path=base_asan_
         run: |
           $baseExe = "Output/Binaries/ReleaseAsan/x64/Fuzz.${{ matrix.format }}.exe"
           $crashDir = "fuzzers/crashes/${{ matrix.format }}"
@@ -265,6 +264,35 @@ jobs:
           echo "new_crashes=$newCount" >> $env:GITHUB_OUTPUT
           echo "has_new_crashes=$($newCount -gt 0 ? 'true' : 'false')" >> $env:GITHUB_OUTPUT
           Write-Host "New crashes: $newCount"
+
+      # Re-run new (PR-introduced) crashes to get clean ASan traces
+      - name: Reproduce new crashes for stack traces
+        if: steps.filter_crashes.outputs.has_new_crashes == 'true'
+        shell: pwsh
+        working-directory: fuzzers
+        env:
+          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0:print_stacktrace=1
+        run: |
+          $newDir = "crashes-new/${{ matrix.format }}"
+          $reproduced = 0; $failed = 0
+          Get-ChildItem $newDir -Filter 'crash-*' -File | ForEach-Object {
+            Write-Host "`n=== Reproducing $($_.Name) ==="
+            $p = Start-Process -FilePath ".\Fuzz.${{ matrix.format }}.exe" `
+              -ArgumentList $_.FullName -NoNewWindow -PassThru -Wait
+            if ($p.ExitCode -ne 0) { $script:reproduced++ }
+            else { $script:failed++; Write-Host "WARNING: crash did not reproduce (exit 0)" }
+          }
+          if ($failed -gt 0) {
+            $logs = Get-ChildItem $newDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue
+            if ($logs) {
+              Write-Host "`n=== Fork-mode ASan logs ==="
+              foreach ($log in $logs) {
+                Write-Host "`n--- $($log.Name) ---"
+                Get-Content $log.FullName
+              }
+            }
+          }
+          Write-Host "`nReproduced: $reproduced, Non-reproducible: $failed"
 
       # --- Non-PR: print full diagnostics ---
       # Re-run each crash input single-process (no fork mode) to get a clean,
