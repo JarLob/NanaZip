@@ -66,11 +66,42 @@ extern "C" size_t LLVMFuzzerCustomMutator(
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
 {
-    // Skip Extract: Romfs Extract is trivial (ReadFileStream+Write), but
-    // 10,000 entries × per-file Buffer(Size) allocations accumulate ASan
-    // shadow memory faster than it's reclaimed, causing OOM in non-fork mode.
-    // All interesting parser logic (linked-list traversal, filename parsing,
-    // type dispatch, directory recursion) runs during Open/GetProperty.
-    NanaZip::Fuzz::RunFuzzCaseNoExtract(3, data, size);
+    // Like RunFuzzCaseNoExtract but WITHOUT querying SevenZipArchiveSymbolicLink.
+    // The Romfs handler allocates std::string(Information.Size, '\0') for symlinks
+    // where Size is an uncapped attacker-controlled BE u32 — every symlink entry
+    // with a large Size triggers a multi-GB OOM that drowns the campaign.
+    IInArchive* archive = NanaZip::Fuzz::CreateHandler(3);
+    if (!archive) return 0;
+
+    auto* stream = new NanaZip::Fuzz::InMemoryInStream(data, size);
+    UINT64 maxCheck = 1ULL << 24;
+    if (archive->Open(stream, &maxCheck, nullptr) == S_OK)
+    {
+        UINT32 num = 0;
+        archive->GetNumberOfItems(&num);
+        if (num > 4096) num = 4096;
+
+        static const PROPID kProps[] = {
+            SevenZipArchivePath,
+            SevenZipArchiveSize,
+            SevenZipArchivePackSize,
+            SevenZipArchiveIsDirectory,
+            SevenZipArchiveModifiedTime,
+            SevenZipArchiveAttributes,
+            // SevenZipArchiveSymbolicLink omitted: uncapped Size → OOM
+        };
+        for (UINT32 i = 0; i < num; ++i)
+        {
+            for (PROPID p : kProps)
+            {
+                PROPVARIANT v{};
+                archive->GetProperty(i, p, &v);
+                ::PropVariantClear(&v);
+            }
+        }
+        archive->Close();
+    }
+    stream->Release();
+    archive->Release();
     return 0;
 }
