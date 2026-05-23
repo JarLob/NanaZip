@@ -237,21 +237,9 @@ jobs:
           Write-Host "New crashes: $newCount"
 
       # --- Non-PR: print full diagnostics ---
-      - name: Print ASan stack traces
-        if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr != 'true'
-        shell: pwsh
-        run: |
-          $crashDir = "fuzzers\crashes\${{ matrix.format }}"
-          $logs = Get-ChildItem $crashDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue
-          if ($logs) {
-            foreach ($log in $logs) {
-              Write-Host "`n=== $($log.Name) ==="
-              Get-Content $log.FullName
-            }
-          } else {
-            Write-Host "No ASan log files found"
-          }
-
+      # Re-run each crash input single-process (no fork mode) to get a clean,
+      # complete ASan trace. Non-reproducible crashes are logged from the
+      # fork-mode ASan log files captured during the original crash.
       - name: Reproduce crashes for stack traces
         if: steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr != 'true'
         shell: pwsh
@@ -260,12 +248,26 @@ jobs:
           ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0:print_stacktrace=1
         run: |
           $crashDir = "crashes\${{ matrix.format }}"
+          $reproduced = 0; $failed = 0
           Get-ChildItem $crashDir -Filter 'crash-*' -File | ForEach-Object {
             Write-Host "`n=== Reproducing $($_.Name) ==="
             $p = Start-Process -FilePath ".\Fuzz.${{ matrix.format }}.exe" `
               -ArgumentList $_.FullName -NoNewWindow -PassThru -Wait
-            Write-Host "Exit code: $($p.ExitCode)"
+            if ($p.ExitCode -ne 0) { $script:reproduced++ }
+            else { $script:failed++; Write-Host "WARNING: crash did not reproduce (exit 0)" }
           }
+          # For non-reproducible crashes, fall back to fork-mode ASan logs
+          if ($failed -gt 0) {
+            $logs = Get-ChildItem $crashDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue
+            if ($logs) {
+              Write-Host "`n=== Fork-mode ASan logs (for non-reproducible crashes) ==="
+              foreach ($log in $logs) {
+                Write-Host "`n--- $($log.Name) ---"
+                Get-Content $log.FullName
+              }
+            }
+          }
+          Write-Host "`nReproduced: $reproduced, Non-reproducible: $failed"
 
       # --- Upload crash artifacts ---
       - name: Package crash artifacts
