@@ -126,7 +126,7 @@ while ($true) {
         Start-Sleep -Seconds 5
         if ($printAsan) {
             Get-ChildItem $CrashDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue |
-                Where-Object { -not $printedAsan.ContainsKey($_.Name) } |
+                Where-Object { -not $printedAsan.ContainsKey($_.Name) -and $_.Length -gt 0 } |
                 ForEach-Object {
                     Start-Sleep -Milliseconds 500  # let ASan finish writing
                     Write-Host "`n[Fuzz] === ASan report: $($_.Name) ==="
@@ -141,7 +141,7 @@ while ($true) {
     # Print any ASan logs written between the last poll and process exit
     if ($printAsan) {
         Get-ChildItem $CrashDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue |
-            Where-Object { -not $printedAsan.ContainsKey($_.Name) } |
+            Where-Object { -not $printedAsan.ContainsKey($_.Name) -and $_.Length -gt 0 } |
             ForEach-Object {
                 Write-Host "`n[Fuzz] === ASan report: $($_.Name) ==="
                 Get-Content $_.FullName
