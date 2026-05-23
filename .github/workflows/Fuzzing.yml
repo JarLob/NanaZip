@@ -21,23 +21,31 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
-  actions: write
+  contents: read   # checkout repository
+  actions: write   # save build output and corpus caches
 
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      cache-key: ${{ steps.cache-key.outputs.key }}
     env:
       POWERSHELL_TELEMETRY_OPTOUT: 1
     steps:
       - uses: actions/checkout@v6
+
+      - name: Compute build cache key
+        id: cache-key
+        shell: pwsh
+        run: |
+          echo "key=build-asan-x64-${{ hashFiles('NanaZip.Codecs/**', 'NanaZip.Core/**', 'Fuzzing/**', 'Directory.Build.*', '**/*.vcxproj', '**/*.props', '**/*.targets') }}" >> $env:GITHUB_OUTPUT
 
       - name: Cache build output
         id: build-cache
         uses: actions/cache@v5
         with:
           path: Output/Binaries/ReleaseAsan/x64/
-          key: build-asan-x64-${{ hashFiles('NanaZip.Codecs/**', 'NanaZip.Core/**', 'Fuzzing/**', 'Directory.Build.*', '**/*.vcxproj', '**/*.props', '**/*.targets') }}
+          key: ${{ steps.cache-key.outputs.key }}
 
       - uses: microsoft/setup-msbuild@v3
         if: steps.build-cache.outputs.cache-hit != 'true'
@@ -55,13 +63,6 @@ jobs:
         run: |
           MSBuild -m NanaZip.Codecs\NanaZip.Codecs.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
           MSBuild -m NanaZip.Core\NanaZip.Core.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
-
-      - name: Upload fuzzer binaries
-        uses: actions/upload-artifact@v7
-        with:
-          name: fuzzer-binaries
-          path: Output/Binaries/ReleaseAsan/x64/
-          retention-days: 3
 
   fuzz:
     needs: build
@@ -96,12 +97,18 @@ jobs:
             echo "skip=false" >> $env:GITHUB_OUTPUT
           }
 
-      - name: Download fuzzer binaries
+      - name: Restore build cache
         if: steps.params.outputs.skip == 'false'
-        uses: actions/download-artifact@v7
+        uses: actions/cache/restore@v5
         with:
-          name: fuzzer-binaries
-          path: fuzzers
+          path: Output/Binaries/ReleaseAsan/x64/
+          key: ${{ needs.build.outputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - name: Prepare fuzzers directory
+        if: steps.params.outputs.skip == 'false'
+        shell: cmd
+        run: xcopy Output\Binaries\ReleaseAsan\x64 fuzzers\ /s /e /q
 
       - name: Restore corpus cache
         if: steps.params.outputs.skip == 'false'
@@ -195,6 +202,14 @@ jobs:
         with:
           name: ${{ steps.package_crashes.outputs.artifact_name }}
           path: ${{ steps.package_crashes.outputs.artifact_path }}
+          retention-days: 90
+
+      - name: Upload fuzzer binaries for crash reproduction
+        if: steps.check_crashes.outputs.has_crashes == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzzer-binaries-${{ matrix.format }}
+          path: Output/Binaries/ReleaseAsan/x64/
           retention-days: 90
 
       - name: Minimize corpus
