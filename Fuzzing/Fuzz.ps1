@@ -129,10 +129,14 @@ while ($true) {
                 Where-Object { -not $printedAsan.ContainsKey($_.Name) -and $_.Length -gt 0 } |
                 ForEach-Object {
                     Start-Sleep -Milliseconds 500  # let ASan finish writing
-                    Write-Host "`n[Fuzz] === ASan report: $($_.Name) ==="
-                    Get-Content $_.FullName
-                    Write-Host "[Fuzz] === end ASan report ==="
+                    $content = Get-Content $_.FullName -Raw
                     $printedAsan[$_.Name] = $true
+                    # Skip libFuzzer HandleMalloc traces (malloc-limit OOMs, not real bugs)
+                    if ($content -match 'ERROR: AddressSanitizer|SUMMARY: AddressSanitizer') {
+                        Write-Host "`n[Fuzz] === ASan report: $($_.Name) ==="
+                        Write-Host $content
+                        Write-Host "[Fuzz] === end ASan report ==="
+                    }
                 }
         }
     }
@@ -143,10 +147,13 @@ while ($true) {
         Get-ChildItem $CrashDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue |
             Where-Object { -not $printedAsan.ContainsKey($_.Name) -and $_.Length -gt 0 } |
             ForEach-Object {
-                Write-Host "`n[Fuzz] === ASan report: $($_.Name) ==="
-                Get-Content $_.FullName
-                Write-Host "[Fuzz] === end ASan report ==="
+                $content = Get-Content $_.FullName -Raw
                 $printedAsan[$_.Name] = $true
+                if ($content -match 'ERROR: AddressSanitizer|SUMMARY: AddressSanitizer') {
+                    Write-Host "`n[Fuzz] === ASan report: $($_.Name) ==="
+                    Write-Host $content
+                    Write-Host "[Fuzz] === end ASan report ==="
+                }
             }
     }
 
