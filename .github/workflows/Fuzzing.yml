@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-2025-vs2026
+    runs-on: windows-latest
     env:
       POWERSHELL_TELEMETRY_OPTOUT: 1
     steps:
@@ -34,7 +34,7 @@ jobs:
 
       - name: Cache build output
         id: build-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: Output/Binaries/ReleaseAsan/x64/
           key: build-asan-x64-${{ hashFiles('NanaZip.Codecs/**', 'NanaZip.Core/**', 'Fuzzing/**', 'Directory.Build.*', '**/*.vcxproj', '**/*.props', '**/*.targets') }}
@@ -65,7 +65,7 @@ jobs:
 
   fuzz:
     needs: build
-    runs-on: windows-2025-vs2026
+    runs-on: windows-latest
     timeout-minutes: 330
     strategy:
       fail-fast: false
