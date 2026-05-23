@@ -108,7 +108,10 @@ rem the report, but libFuzzer's -ignore_ooms / -ignore_crashes will swallow
 rem the exit). detect_leaks=0 is a no-op on Windows but harmless;
 rem abort_on_error=0 is the Windows default but set explicitly in case of
 rem inherited env.
-set "ASAN_OPTIONS=allocator_may_return_null=1:detect_leaks=0:abort_on_error=0"
+rem log_path must be relative (no drive letter colon) because ASan uses ':'
+rem as the option separator. CWD is work\<Format>, crashes are at
+rem crashes\<Format>, so the relative path is ../../crashes/<Format>/asan.
+set "ASAN_OPTIONS=allocator_may_return_null=1:detect_leaks=0:abort_on_error=0:log_path=../../crashes/%HARNESS%/asan"
 
 echo [Fuzz.cmd] harness=%HARNESS%
 echo [Fuzz.cmd] corpus =%CORPUS%
@@ -137,6 +140,7 @@ rem
 rem Time-limited mode (CI): set FUZZ_TOTAL_SECONDS=N before calling this
 rem script. The fuzzer will stop after N seconds total. Without this env var
 rem the loop runs forever (interactive use).
+set "ASAN_PRINTED=0"
 if defined FUZZ_TOTAL_SECONDS (
     for /f %%T in ('powershell -NoProfile -c "[int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()"') do set "FUZZ_START=%%T"
     set /a "FUZZ_END=FUZZ_START + FUZZ_TOTAL_SECONDS"
@@ -172,6 +176,19 @@ echo [Fuzz.cmd] Starting fuzzer (Ctrl-C to stop)...
 if defined FUZZ_TOTAL_SECONDS (
     for /f %%T in ('powershell -NoProfile -c "[int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()"') do set "NOW=%%T"
     if !NOW! GEQ !FUZZ_END! goto fuzz_done
+)
+
+rem Print any new ASan stack-trace logs since last iteration.
+set "ASAN_COUNT=0"
+for %%F in ("%OUT%\asan.*") do set /a "ASAN_COUNT+=1"
+if !ASAN_COUNT! GTR !ASAN_PRINTED! (
+    echo [Fuzz.cmd] === New ASan reports ^(!ASAN_COUNT! total^) ===
+    set "IDX=0"
+    for %%F in ("%OUT%\asan.*") do (
+        set /a "IDX+=1"
+        if !IDX! GTR !ASAN_PRINTED! type "%%F"
+    )
+    set "ASAN_PRINTED=!ASAN_COUNT!"
 )
 
 set "FUZZ_EXIT=%ERRORLEVEL%"

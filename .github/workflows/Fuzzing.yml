@@ -100,7 +100,7 @@ jobs:
         shell: cmd
         working-directory: fuzzers
         env:
-          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0
+          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0:log_path=crashes/${{ matrix.format }}/asan
           FUZZ_TOTAL_SECONDS: ${{ steps.params.outputs.fuzz_seconds }}
         run: Fuzz.cmd ${{ matrix.format }}
 
@@ -123,12 +123,44 @@ jobs:
             echo "has_crashes=false" >> $env:GITHUB_OUTPUT
           }
 
+      - name: Print ASan stack traces
+        if: steps.check_crashes.outputs.has_crashes == 'true'
+        shell: pwsh
+        run: |
+          $crashDir = "fuzzers\crashes\${{ matrix.format }}"
+          $logs = Get-ChildItem $crashDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue
+          if ($logs) {
+            foreach ($log in $logs) {
+              Write-Host "`n=== $($log.Name) ==="
+              Get-Content $log.FullName
+            }
+          } else {
+            Write-Host "No ASan log files found"
+          }
+
+      - name: Reproduce crashes for stack traces
+        if: steps.check_crashes.outputs.has_crashes == 'true'
+        shell: pwsh
+        working-directory: fuzzers
+        env:
+          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0:print_stacktrace=1
+        run: |
+          $crashDir = "crashes\${{ matrix.format }}"
+          Get-ChildItem $crashDir -Filter 'crash-*' -File | ForEach-Object {
+            Write-Host "`n=== Reproducing $($_.Name) ==="
+            $p = Start-Process -FilePath ".\Fuzz.${{ matrix.format }}.exe" `
+              -ArgumentList $_.FullName -NoNewWindow -PassThru -Wait
+            Write-Host "Exit code: $($p.ExitCode)"
+          }
+
       - name: Upload crash artifacts
         if: steps.check_crashes.outputs.has_crashes == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: crashes-${{ matrix.format }}
-          path: fuzzers/crashes/${{ matrix.format }}/crash-*
+          path: |
+            fuzzers/crashes/${{ matrix.format }}/crash-*
+            fuzzers/crashes/${{ matrix.format }}/asan.*
           retention-days: 90
 
       - name: Minimize corpus
