@@ -148,7 +148,7 @@ jobs:
           } else {
             $minutes = $env:DEFAULT_DURATION_MINUTES
           }
-          echo "fuzz_seconds=$($minutes * 60)" >> $env:GITHUB_OUTPUT
+          echo "fuzz_seconds=$([int]$minutes * 60)" >> $env:GITHUB_OUTPUT
           echo "is_pr=$env:IS_PR" >> $env:GITHUB_OUTPUT
           $requested = ($env:INPUT_FORMATS ?? '').Trim()
           if ($requested -and ($requested -split ',' | ForEach-Object { $_.Trim() }) -notcontains $env:MATRIX_FORMAT) {
