@@ -308,7 +308,7 @@ namespace NanaZip::Codecs::Archive
                             {
                                 break;
                             }
-                            i += sizeof(char) * NameSize;
+                            i += 1 + sizeof(char) * NameSize;
                             if (Size < sizeof(char) * NameSize)
                             {
                                 break;
