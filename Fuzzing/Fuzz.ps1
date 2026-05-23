@@ -82,79 +82,83 @@ if ($TotalSeconds -gt 0) {
     $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TotalSeconds)
 }
 
-# --- FileSystemWatcher for real-time ASan trace printing ---
-$watcher = $null
-$asanJob = $null
-if ($printAsan) {
-    $watcher = [System.IO.FileSystemWatcher]::new($CrashDir, 'asan.*')
-    $watcher.NotifyFilter = [System.IO.NotifyFilters]::FileName
-    $watcher.EnableRaisingEvents = $true
-    $asanJob = Register-ObjectEvent $watcher 'Created' -Action {
-        # Brief delay to let ASan finish writing the file
-        Start-Sleep -Milliseconds 500
-        $f = $Event.SourceEventArgs.FullPath
-        Write-Host "`n[Fuzz] === ASan report: $($Event.SourceEventArgs.Name) ==="
-        Get-Content $f
-        Write-Host "[Fuzz] === end ASan report ==="
-    }
-}
+# Track which ASan log files we've already printed.
+$printedAsan = @{}
 
 # --- Fuzzing loop ---
-try {
-    while ($true) {
-        # Check time limit
-        if ($deadline) {
-            $remaining = [int]($deadline - [DateTimeOffset]::UtcNow).TotalSeconds
-            if ($remaining -le 0) {
-                Write-Host "[Fuzz] Time limit reached, stopping."
-                break
+while ($true) {
+    # Check time limit
+    if ($deadline) {
+        $remaining = [int]($deadline - [DateTimeOffset]::UtcNow).TotalSeconds
+        if ($remaining -le 0) {
+            Write-Host "[Fuzz] Time limit reached, stopping."
+            break
+        }
+        Write-Host "[Fuzz] ${remaining}s remaining..."
+    }
+
+    # Build argument list
+    $fuzzArgs = @(
+        '-fork=2'
+        '-ignore_crashes=1'
+        '-ignore_ooms=1'
+        '-ignore_timeouts=1'
+        '-timeout=30'
+        '-rss_limit_mb=4096'
+        '-malloc_limit_mb=256'
+        '-reload=30'
+        '-print_final_stats=1'
+        "-artifact_prefix=$CrashDir\"
+    )
+    if ($dictArg) { $fuzzArgs += $dictArg }
+    $fuzzArgs += $extraArgs
+    if ($deadline) {
+        $fuzzArgs += "-max_total_time=$remaining"
+    }
+    $fuzzArgs += $Corpus
+
+    Write-Host "[Fuzz] Starting fuzzer (Ctrl-C to stop)..."
+    $proc = Start-Process -FilePath $Exe -ArgumentList $fuzzArgs `
+        -NoNewWindow -PassThru
+
+    # Poll for new ASan logs while the fuzzer runs
+    while (-not $proc.HasExited) {
+        Start-Sleep -Seconds 5
+        if ($printAsan) {
+            Get-ChildItem $CrashDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue |
+                Where-Object { -not $printedAsan.ContainsKey($_.Name) } |
+                ForEach-Object {
+                    Start-Sleep -Milliseconds 500  # let ASan finish writing
+                    Write-Host "`n[Fuzz] === ASan report: $($_.Name) ==="
+                    Get-Content $_.FullName
+                    Write-Host "[Fuzz] === end ASan report ==="
+                    $printedAsan[$_.Name] = $true
+                }
+        }
+    }
+    $proc.WaitForExit()  # ensure exit code is populated
+
+    # Print any ASan logs written between the last poll and process exit
+    if ($printAsan) {
+        Get-ChildItem $CrashDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue |
+            Where-Object { -not $printedAsan.ContainsKey($_.Name) } |
+            ForEach-Object {
+                Write-Host "`n[Fuzz] === ASan report: $($_.Name) ==="
+                Get-Content $_.FullName
+                Write-Host "[Fuzz] === end ASan report ==="
+                $printedAsan[$_.Name] = $true
             }
-            Write-Host "[Fuzz] ${remaining}s remaining..."
-        }
-
-        # Build argument list
-        $fuzzArgs = @(
-            '-fork=2'
-            '-ignore_crashes=1'
-            '-ignore_ooms=1'
-            '-ignore_timeouts=1'
-            '-timeout=30'
-            '-rss_limit_mb=4096'
-            '-malloc_limit_mb=256'
-            '-reload=30'
-            '-print_final_stats=1'
-            "-artifact_prefix=$CrashDir\"
-        )
-        if ($dictArg) { $fuzzArgs += $dictArg }
-        $fuzzArgs += $extraArgs
-        if ($deadline) {
-            $fuzzArgs += "-max_total_time=$remaining"
-        }
-        $fuzzArgs += $Corpus
-
-        Write-Host "[Fuzz] Starting fuzzer (Ctrl-C to stop)..."
-        $proc = Start-Process -FilePath $Exe -ArgumentList $fuzzArgs `
-            -NoNewWindow -PassThru -Wait
-
-        # Check time limit after fuzzer exits
-        if ($deadline) {
-            $remaining = [int]($deadline - [DateTimeOffset]::UtcNow).TotalSeconds
-            if ($remaining -le 0) {
-                Write-Host "[Fuzz] Time limit reached, stopping."
-                break
-            }
-        }
-
-        Write-Host "[Fuzz] Fuzzer exited with code $($proc.ExitCode), restarting in 2s..."
-        Start-Sleep -Seconds 2
     }
-} finally {
-    # Clean up watcher
-    if ($asanJob) {
-        Unregister-Event -SourceIdentifier $asanJob.Name -ErrorAction SilentlyContinue
+
+    # Check time limit after fuzzer exits
+    if ($deadline) {
+        $remaining = [int]($deadline - [DateTimeOffset]::UtcNow).TotalSeconds
+        if ($remaining -le 0) {
+            Write-Host "[Fuzz] Time limit reached, stopping."
+            break
+        }
     }
-    if ($watcher) {
-        $watcher.EnableRaisingEvents = $false
-        $watcher.Dispose()
-    }
+
+    Write-Host "[Fuzz] Fuzzer exited with code $($proc.ExitCode), restarting in 2s..."
+    Start-Sleep -Seconds 2
 }
