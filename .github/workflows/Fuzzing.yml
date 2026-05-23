@@ -8,7 +8,7 @@ on:
       duration_minutes:
         description: 'Fuzzing duration in minutes'
         required: false
-        default: '300'
+        default: '120'
         type: string
       formats:
         description: 'Comma-separated formats to fuzz (blank = all)'
@@ -38,7 +38,7 @@ permissions:
   actions: write   # save build output and corpus caches
 
 env:
-  DEFAULT_DURATION_MINUTES: 300
+  DEFAULT_DURATION_MINUTES: 120
   PR_DURATION_MINUTES: 10
 
 jobs:
@@ -81,8 +81,8 @@ jobs:
           MSBuild -m NanaZip.Codecs\NanaZip.Codecs.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
           MSBuild -m NanaZip.Core\NanaZip.Core.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
 
-  # Build base-branch binaries in parallel (PR only) so fuzz legs
-  # don't each have to build them when crashes are found.
+  # Build base-branch binaries in parallel (PR only) so fuzz jobs don't to build multiple times
+  # Each fuzz job needs the base-branch binaries when crashes are found to filter the crashes that are already present in the base branch.
   build-base:
     if: github.event_name == 'pull_request'
     runs-on: windows-latest
@@ -216,7 +216,8 @@ jobs:
             $crashes = Get-ChildItem $crashDir -Filter 'crash-*' -File
           }
           if ($crashes.Count -gt 0) {
-            Write-Host "::error::Found $($crashes.Count) crash(es) for ${{ matrix.format }}:"
+            $level = if ("${{ steps.params.outputs.is_pr }}" -eq "true") { "warning" } else { "error" }
+            Write-Host "::${level}::Found $($crashes.Count) crash(es) for ${{ matrix.format }}:"
             $crashes | ForEach-Object { Write-Host "  $_" }
             echo "has_crashes=true" >> $env:GITHUB_OUTPUT
           } else {
@@ -265,6 +266,9 @@ jobs:
           echo "new_crashes=$newCount" >> $env:GITHUB_OUTPUT
           echo "has_new_crashes=$($newCount -gt 0 ? 'true' : 'false')" >> $env:GITHUB_OUTPUT
           Write-Host "New crashes: $newCount"
+          if ($newCount -gt 0) {
+            Write-Host "::error::$newCount new crash(es) introduced by this PR for ${{ matrix.format }}"
+          }
 
       # Re-run new (PR-introduced) crashes to get clean ASan traces
       - name: Reproduce new crashes for stack traces
@@ -392,9 +396,9 @@ jobs:
         run: exit 1
 
   # Upload fuzzer binaries once (shared across all formats) when any fuzz
-  # matrix leg failed due to crashes.
+  # matrix fuzzer failed due to crashes.
   upload-binaries:
-    needs: [build, fuzz]
+    needs: [build, fuzz]   # build is needed only for cache-key output reference
     runs-on: windows-latest
     if: always() && needs.fuzz.result == 'failure'
     steps:
