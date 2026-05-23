@@ -133,7 +133,7 @@ jobs:
       - name: Prepare fuzzers directory
         if: steps.params.outputs.skip == 'false'
         shell: pwsh
-        run: Copy-Item -Path Output/Binaries/ReleaseAsan/x64/* -Destination fuzzers/ -Recurse -Force
+        run: Copy-Item -Path Output/Binaries/ReleaseAsan/x64 -Destination fuzzers -Recurse
 
       - name: Restore corpus cache
         if: steps.params.outputs.skip == 'false'
