@@ -259,22 +259,25 @@ jobs:
         if: steps.filter_crashes.outputs.has_new_crashes == 'true'
         shell: pwsh
         working-directory: fuzzers
-        env:
-          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0:print_stacktrace=1
         run: |
           $newDir = "crashes-new/${{ matrix.format }}"
           $reproduced = 0; $failed = 0
           Get-ChildItem $newDir -Filter 'crash-*' -File | ForEach-Object {
             Write-Host "`n=== Reproducing $($_.Name) ==="
+            $env:ASAN_OPTIONS = "allocator_may_return_null=1:detect_leaks=0:abort_on_error=0:print_stacktrace=1:log_path=$newDir/$($_.BaseName).asan"
             $p = Start-Process -FilePath ".\Fuzz.${{ matrix.format }}.exe" `
               -ArgumentList $_.FullName -NoNewWindow -PassThru -Wait
-            if ($p.ExitCode -ne 0) { $script:reproduced++ }
+            if ($p.ExitCode -ne 0) {
+              $script:reproduced++
+              Get-ChildItem $newDir -Filter "$($_.BaseName).asan.*" -File -ErrorAction SilentlyContinue |
+                ForEach-Object { Get-Content $_.FullName }
+            }
             else { $script:failed++; Write-Host "WARNING: crash did not reproduce (exit 0)" }
           }
           if ($failed -gt 0) {
             $logs = Get-ChildItem $newDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue
             if ($logs) {
-              Write-Host "`n=== Fork-mode ASan logs ==="
+              Write-Host "`n=== Fork-mode ASan logs (for non-reproducible crashes) ==="
               foreach ($log in $logs) {
                 Write-Host "`n--- $($log.Name) ---"
                 Get-Content $log.FullName
@@ -291,19 +294,22 @@ jobs:
         if: always() && steps.check_crashes.outputs.has_crashes == 'true' && steps.params.outputs.is_pr != 'true'
         shell: pwsh
         working-directory: fuzzers
-        env:
-          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0:print_stacktrace=1
         run: |
           $crashDir = "crashes\${{ matrix.format }}"
           $reproduced = 0; $failed = 0
           Get-ChildItem $crashDir -Filter 'crash-*' -File | ForEach-Object {
             Write-Host "`n=== Reproducing $($_.Name) ==="
+            $env:ASAN_OPTIONS = "allocator_may_return_null=1:detect_leaks=0:abort_on_error=0:print_stacktrace=1:log_path=$crashDir/$($_.BaseName).asan"
             $p = Start-Process -FilePath ".\Fuzz.${{ matrix.format }}.exe" `
               -ArgumentList $_.FullName -NoNewWindow -PassThru -Wait
-            if ($p.ExitCode -ne 0) { $script:reproduced++ }
+            if ($p.ExitCode -ne 0) {
+              $script:reproduced++
+              Get-ChildItem $crashDir -Filter "$($_.BaseName).asan.*" -File -ErrorAction SilentlyContinue |
+                ForEach-Object { Get-Content $_.FullName }
+            }
             else { $script:failed++; Write-Host "WARNING: crash did not reproduce (exit 0)" }
           }
-          # For non-reproducible crashes, fall back to fork-mode ASan logs
+          # For non-reproducible crashes, fall back to uncorrelated fork-mode ASan logs
           if ($failed -gt 0) {
             $logs = Get-ChildItem $crashDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue
             if ($logs) {
