@@ -15,6 +15,11 @@ on:
         required: false
         default: ''
         type: string
+      print_asan:
+        description: 'Print ASan traces in the log'
+        required: false
+        default: false
+        type: boolean
   pull_request:
     paths:
       - 'NanaZip.Codecs/**'
@@ -102,6 +107,7 @@ jobs:
         env:
           INPUT_DURATION: ${{ github.event.inputs.duration_minutes }}
           INPUT_FORMATS: ${{ github.event.inputs.formats }}
+          INPUT_PRINT_ASAN: ${{ github.event.inputs.print_asan }}
           EVENT_NAME: ${{ github.event_name }}
           IS_PR: ${{ github.event_name == 'pull_request' }}
           MATRIX_FORMAT: ${{ matrix.format }}
@@ -121,6 +127,11 @@ jobs:
           } else {
             echo "skip=false" >> $env:GITHUB_OUTPUT
           }
+          # PRs never print ASan; schedule/dispatch respect the input (default: true)
+          $noAsan = if ($env:IS_PR -eq 'true') { 'true' }
+                    elseif ($env:INPUT_PRINT_ASAN -eq 'false') { 'true' }
+                    else { 'false' }
+          echo "no_print_asan=$noAsan" >> $env:GITHUB_OUTPUT
 
       - name: Restore build cache
         if: steps.params.outputs.skip == 'false'
@@ -148,7 +159,7 @@ jobs:
         if: steps.params.outputs.skip == 'false'
         shell: pwsh
         working-directory: fuzzers
-        run: ./Fuzz.ps1 -Format ${{ matrix.format }} -TotalSeconds ${{ steps.params.outputs.fuzz_seconds }}${{ steps.params.outputs.is_pr == 'true' && ' -NoPrintAsan' || '' }}
+        run: ./Fuzz.ps1 -Format ${{ matrix.format }} -TotalSeconds ${{ steps.params.outputs.fuzz_seconds }}${{ steps.params.outputs.no_print_asan == 'true' && ' -NoPrintAsan' || '' }}
 
       - name: Check for crashes
         if: steps.params.outputs.skip == 'false'
