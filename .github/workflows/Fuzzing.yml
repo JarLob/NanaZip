@@ -41,6 +41,7 @@ jobs:
     runs-on: windows-latest
     outputs:
       cache-key: ${{ steps.cache-key.outputs.key }}
+      occ-cache-key: ${{ steps.occ-cache-key.outputs.key }}
     env:
       POWERSHELL_TELEMETRY_OPTOUT: 1
     steps:
@@ -67,6 +68,28 @@ jobs:
         run: |
           MSBuild -m NanaZip.Codecs\NanaZip.Codecs.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
           MSBuild -m NanaZip.Core\NanaZip.Core.vcxproj /p:Configuration=ReleaseAsan /p:Platform=x64 /restore
+
+      - name: Compute OpenCppCoverage cache key
+        if: github.event_name != 'pull_request'
+        id: occ-cache-key
+        shell: pwsh
+        run: echo "key=opencppcoverage-0.9.9.0" >> $env:GITHUB_OUTPUT
+
+      - name: Cache OpenCppCoverage
+        if: github.event_name != 'pull_request'
+        id: occ-cache
+        uses: actions/cache@v5
+        with:
+          path: C:\Program Files\OpenCppCoverage
+          key: opencppcoverage-0.9.9.0
+
+      - name: Install OpenCppCoverage
+        if: github.event_name != 'pull_request' && steps.occ-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri 'https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-0.9.9.0/OpenCppCoverageSetup-x64-0.9.9.0.exe' -OutFile occ_setup.exe
+          Start-Process -FilePath .\occ_setup.exe -ArgumentList '/S' -Wait
+          Remove-Item occ_setup.exe
 
   # Build base-branch binaries in parallel (PR only) so fuzz jobs don't to build multiple times
   # Each fuzz job needs the base-branch binaries when crashes are found to filter the crashes that are already present in the base branch.
@@ -383,11 +406,116 @@ jobs:
           path: fuzzers/corpus/${{ matrix.format }}
           key: fuzz-corpus-${{ matrix.format }}-${{ github.run_id }}
 
+      # OpenCppCoverage is a portable tool (no registry or PATH dependencies),
+      # so restoring the install directory from cache is sufficient.
+      - name: Restore OpenCppCoverage
+        if: always() && steps.params.outputs.skip == 'false' && steps.params.outputs.is_pr != 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: C:\Program Files\OpenCppCoverage
+          key: ${{ needs.build.outputs.occ-cache-key }}
+          fail-on-cache-miss: true
+        continue-on-error: true
+
+      - name: Generate coverage data
+        if: always() && steps.params.outputs.skip == 'false' && steps.params.outputs.is_pr != 'true'
+        id: coverage
+        shell: pwsh
+        working-directory: fuzzers
+        timeout-minutes: 30
+        continue-on-error: true
+        env:
+          ASAN_OPTIONS: allocator_may_return_null=1:detect_leaks=0:abort_on_error=0
+        run: |
+          $format = "${{ matrix.format }}"
+          $occ = "C:\Program Files\OpenCppCoverage\OpenCppCoverage.exe"
+          if (-not (Test-Path $occ)) {
+            Write-Host "::warning::OpenCppCoverage not found, skipping coverage"
+            exit 1
+          }
+          & $occ --sources NanaZip.Codecs --sources NanaZip.Core `
+            --export_type "binary:coverage-${format}.cov" `
+            -- ".\Fuzz.${format}.exe" "corpus\${format}" -runs=0
+
+      - name: Upload coverage data
+        if: always() && steps.coverage.outcome == 'success' && steps.params.outputs.is_pr != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ matrix.format }}
+          path: fuzzers/coverage-${{ matrix.format }}.cov
+          retention-days: 7
+
       - name: Fail if crashes found
         if: |
           (steps.params.outputs.is_pr != 'true' && steps.check_crashes.outputs.has_crashes == 'true') ||
           (steps.params.outputs.is_pr == 'true' && steps.filter_crashes.outputs.has_new_crashes == 'true')
         run: exit 1
+
+  # Merge per-format coverage into a single HTML report.
+  coverage-report:
+    needs: [build, fuzz]
+    if: always() && !cancelled() && github.event_name != 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # OpenCppCoverage is a portable tool (no registry or PATH dependencies),
+      # so restoring the install directory from cache is sufficient.
+      - name: Restore OpenCppCoverage
+        uses: actions/cache/restore@v5
+        with:
+          path: C:\Program Files\OpenCppCoverage
+          key: ${{ needs.build.outputs.occ-cache-key }}
+          fail-on-cache-miss: true
+
+      - name: Download coverage data
+        id: download_coverage
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage-data
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Generate HTML coverage report
+        if: steps.download_coverage.outcome == 'success'
+        id: gen_report
+        shell: pwsh
+        run: |
+          $occ = "C:\Program Files\OpenCppCoverage\OpenCppCoverage.exe"
+          $covFiles = Get-ChildItem coverage-data -Filter '*.cov' -File -ErrorAction SilentlyContinue
+          if (-not $covFiles -or $covFiles.Count -eq 0) {
+            Write-Host "::warning::No coverage data found"
+            exit 0
+          }
+          $inputArgs = @()
+          foreach ($f in $covFiles) { $inputArgs += "--input_coverage=$($f.FullName)" }
+          & $occ @inputArgs --export_type "html:coverage-report"
+          echo "has_report=true" >> $env:GITHUB_OUTPUT
+
+      - name: Package coverage report
+        if: steps.gen_report.outputs.has_report == 'true'
+        id: package_coverage
+        shell: pwsh
+        env:
+          CRASH_KEY: ${{ secrets.CRASH_KEY }}
+        run: |
+          if ($env:CRASH_KEY) {
+            7z a -p"$env:CRASH_KEY" -mhe=on coverage-report.7z coverage-report\
+            echo "artifact_path=coverage-report.7z" >> $env:GITHUB_OUTPUT
+            echo "artifact_name=coverage-report-encrypted" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "artifact_path=coverage-report" >> $env:GITHUB_OUTPUT
+            echo "artifact_name=coverage-report" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Upload coverage report
+        if: steps.package_coverage.outputs.artifact_name
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package_coverage.outputs.artifact_name }}
+          path: ${{ steps.package_coverage.outputs.artifact_path }}
+          retention-days: 90
 
   # Upload fuzzer binaries once (shared across all formats) when any fuzz
   # matrix fuzzer failed due to crashes.
