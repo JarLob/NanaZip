@@ -87,7 +87,14 @@ jobs:
         if: github.event_name != 'pull_request' && steps.occ-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri 'https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-0.9.9.0/OpenCppCoverageSetup-x64-0.9.9.0.exe' -OutFile occ_setup.exe
+          $url = 'https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-0.9.9.0/OpenCppCoverageSetup-x64-0.9.9.0.exe'
+          $expectedHash = '2295A733DA39412C61E4F478677519DD0BB1893D88313CE56B468C9E50517888'
+          Invoke-WebRequest -Uri $url -OutFile occ_setup.exe
+          $actualHash = (Get-FileHash occ_setup.exe -Algorithm SHA256).Hash
+          if ($actualHash -ne $expectedHash) {
+            Write-Error "SHA256 mismatch: expected $expectedHash, got $actualHash"
+            exit 1
+          }
           Start-Process -FilePath .\occ_setup.exe -ArgumentList '/S' -Wait
           Remove-Item occ_setup.exe
 
