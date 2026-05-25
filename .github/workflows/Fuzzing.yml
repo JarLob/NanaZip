@@ -462,7 +462,7 @@ jobs:
   # Merge per-format coverage into a single HTML report.
   coverage-report:
     needs: [build, fuzz]
-    if: always() && !cancelled() && github.event_name != 'pull_request'
+    if: always() && github.event_name != 'pull_request'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -526,20 +526,43 @@ jobs:
           path: ${{ steps.package_coverage.outputs.artifact_path }}
           retention-days: 90
 
-  # Upload fuzzer binaries once (shared across all formats) when any fuzz
-  # matrix fuzzer failed due to crashes.
+  # Upload fuzzer binaries for local crash reproduction. Runs on failure
+  # (crash found) or cancellation (user may have cancelled after spotting a
+  # crash). On cancellation we probe for crash artifacts first — if none
+  # were uploaded by any fuzz leg, we skip the binary upload.
   upload-binaries:
     needs: [build, fuzz]   # build is needed only for cache-key output reference
     runs-on: windows-latest
-    if: always() && needs.fuzz.result == 'failure'
+    if: always() && (needs.fuzz.result == 'failure' || needs.fuzz.result == 'cancelled')
     steps:
+      - name: Check for crash artifacts
+        if: needs.fuzz.result == 'cancelled'
+        id: probe
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const arts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            const has = arts.data.artifacts.some(a => a.name.startsWith('crashes-'));
+            core.setOutput('has_crashes', has.toString());
+
+      - name: Skip if cancelled without crashes
+        if: needs.fuzz.result == 'cancelled' && steps.probe.outputs.has_crashes != 'true'
+        run: echo "::notice::No crash artifacts found — skipping binary upload"
+
       - name: Restore build cache
+        if: needs.fuzz.result == 'failure' || steps.probe.outputs.has_crashes == 'true'
         uses: actions/cache/restore@v5
         with:
           path: Output/Binaries/ReleaseAsan/x64/
           key: ${{ needs.build.outputs.cache-key }}
 
       - name: Upload fuzzer binaries for crash reproduction
+        if: needs.fuzz.result == 'failure' || steps.probe.outputs.has_crashes == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: fuzzer-binaries
