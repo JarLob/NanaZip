@@ -95,7 +95,7 @@ jobs:
             Write-Error "SHA256 mismatch: expected $expectedHash, got $actualHash"
             exit 1
           }
-          Start-Process -FilePath .\occ_setup.exe -ArgumentList '/S' -Wait
+          Start-Process -FilePath .\occ_setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
           Remove-Item occ_setup.exe
 
   # Build base-branch binaries in parallel (PR only) so fuzz jobs don't to build multiple times
@@ -413,8 +413,9 @@ jobs:
           path: fuzzers/corpus/${{ matrix.format }}
           key: fuzz-corpus-${{ matrix.format }}-${{ github.run_id }}
 
-      # OpenCppCoverage is a portable tool (no registry or PATH dependencies),
-      # so restoring the install directory from cache is sufficient.
+      # OpenCppCoverage is self-contained in its install directory. The Inno Setup
+      # installer also registers msdia140.dll (DIA SDK) as a COM component, but GHA
+      # runners already have it registered via Visual Studio, so cache restore works.
       - name: Restore OpenCppCoverage
         if: always() && steps.params.outputs.skip == 'false' && steps.params.outputs.is_pr != 'true'
         uses: actions/cache/restore@v5
@@ -466,8 +467,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # OpenCppCoverage is a portable tool (no registry or PATH dependencies),
-      # so restoring the install directory from cache is sufficient.
+      # OpenCppCoverage is self-contained in its install directory. The Inno Setup
+      # installer also registers msdia140.dll (DIA SDK) as a COM component, but GHA
+      # runners already have it registered via Visual Studio, so cache restore works.
       - name: Restore OpenCppCoverage
         uses: actions/cache/restore@v5
         with:
