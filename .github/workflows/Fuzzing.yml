@@ -142,13 +142,13 @@ jobs:
           MATRIX_FORMAT: ${{ matrix.format }}
         run: |
           if ($env:EVENT_NAME -eq "pull_request") {
-            $minutes = $env:PR_DEFAULT_DURATION_MINUTES
+            [int]$minutes = $env:PR_DEFAULT_DURATION_MINUTES
           } elseif ($env:INPUT_DURATION) {
-            $minutes = [int]$env:INPUT_DURATION
+            [int]$minutes = $env:INPUT_DURATION
           } else {
-            $minutes = $env:DEFAULT_DURATION_MINUTES
+            [int]$minutes = $env:DEFAULT_DURATION_MINUTES
           }
-          echo "fuzz_seconds=$([int]$minutes * 60)" >> $env:GITHUB_OUTPUT
+          echo "fuzz_seconds=$($minutes * 60)" >> $env:GITHUB_OUTPUT
           echo "is_pr=$env:IS_PR" >> $env:GITHUB_OUTPUT
           $requested = ($env:INPUT_FORMATS ?? '').Trim()
           if ($requested -and ($requested -split ',' | ForEach-Object { $_.Trim() }) -notcontains $env:MATRIX_FORMAT) {
