@@ -15,11 +15,6 @@ on:
         required: false
         default: ''
         type: string
-      print_asan:
-        description: 'Print ASan traces in the log'
-        required: false
-        default: false
-        type: boolean
   pull_request:
     paths:
       - 'NanaZip.Codecs/**'
@@ -136,10 +131,10 @@ jobs:
         env:
           INPUT_DURATION: ${{ github.event.inputs.duration_minutes }}
           INPUT_FORMATS: ${{ github.event.inputs.formats }}
-          INPUT_PRINT_ASAN: ${{ github.event.inputs.print_asan }}
           EVENT_NAME: ${{ github.event_name }}
           IS_PR: ${{ github.event_name == 'pull_request' }}
           MATRIX_FORMAT: ${{ matrix.format }}
+          HAS_CRASH_KEY: ${{ secrets.CRASH_KEY != '' }}
         run: |
           if ($env:EVENT_NAME -eq "pull_request") {
             [int]$minutes = $env:PR_DEFAULT_DURATION_MINUTES
@@ -156,8 +151,10 @@ jobs:
           } else {
             echo "skip=false" >> $env:GITHUB_OUTPUT
           }
-          # Scheduled run logs are public, PRs may reproduce already found crash in the base repo — only print ASan for explicit dispatch opt-in
-          $noAsan = if ($env:INPUT_PRINT_ASAN -eq 'true') { 'false' }
+          # Print ASan traces in CI only when no encryption key is set (schedule/dispatch).
+          # With CRASH_KEY, traces go into the encrypted artifact instead.
+          # PR fuzzing step always suppresses (reproduce step handles trace printing).
+          $noAsan = if ($env:EVENT_NAME -ne 'pull_request' -and $env:HAS_CRASH_KEY -ne 'true') { 'false' }
                     else { 'true' }
           echo "no_print_asan=$noAsan" >> $env:GITHUB_OUTPUT
 
@@ -296,6 +293,7 @@ jobs:
         working-directory: fuzzers
         run: |
           $crashDir = "crashes\${{ matrix.format }}"
+          $printAsan = "${{ steps.params.outputs.no_print_asan }}" -ne "true"
           $reproduced = 0; $failed = 0
           Get-ChildItem $crashDir -Filter 'crash-*' -File | ForEach-Object {
             Write-Host "`n=== Reproducing $($_.Name) ==="
@@ -304,13 +302,15 @@ jobs:
               -ArgumentList $_.FullName -NoNewWindow -PassThru -Wait
             if ($p.ExitCode -ne 0) {
               $script:reproduced++
-              Get-ChildItem $crashDir -Filter "$($_.BaseName).asan.*" -File -ErrorAction SilentlyContinue |
-                ForEach-Object { Get-Content $_.FullName }
+              if ($printAsan) {
+                Get-ChildItem $crashDir -Filter "$($_.BaseName).asan.*" -File -ErrorAction SilentlyContinue |
+                  ForEach-Object { Get-Content $_.FullName }
+              }
             }
             else { $script:failed++; Write-Host "WARNING: crash did not reproduce (exit 0)" }
           }
           # For non-reproducible crashes, fall back to uncorrelated fork-mode ASan logs
-          if ($failed -gt 0) {
+          if ($printAsan -and $failed -gt 0) {
             $logs = Get-ChildItem $crashDir -Filter 'asan.*' -File -ErrorAction SilentlyContinue
             if ($logs) {
               Write-Host "`n=== Fork-mode ASan logs (for non-reproducible crashes) ==="
