@@ -335,8 +335,12 @@ jobs:
           # For PRs, only package new crashes; for non-PR, package all
           $isPr = "${{ steps.params.outputs.is_pr }}" -eq "true"
           $crashDir = if ($isPr) { "fuzzers/crashes-new/${{ matrix.format }}" } else { "fuzzers/crashes/${{ matrix.format }}" }
+          # Remove non-crash files: oom/timeout inputs, uncorrelated fork-mode logs, empty repro logs
+          Get-ChildItem $crashDir -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'oom-*' -or $_.Name -like 'timeout-*' -or $_.Name -like 'asan.*' -or ($_.Name -like '*.asan.*' -and $_.Length -eq 0) } |
+            Remove-Item -Force
           if ($env:CRASH_KEY) {
-            7z a -p"$env:CRASH_KEY" -mhe=on "crashes-${{ matrix.format }}.7z" "$crashDir/crash-*" "$crashDir/asan.*"
+            7z a -p"$env:CRASH_KEY" -mhe=on "crashes-${{ matrix.format }}.7z" "$crashDir/crash-*"
             echo "artifact_path=crashes-${{ matrix.format }}.7z" >> $env:GITHUB_OUTPUT
             echo "artifact_name=crashes-${{ matrix.format }}-encrypted" >> $env:GITHUB_OUTPUT
             Write-Host "Crash artifacts encrypted"
