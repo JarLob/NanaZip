@@ -18,6 +18,8 @@
 # the workflow is not run for longer periods of time.
 # Each scheduled/dispatch run generates a static html coverage report that represents code covered by the current corpus,
 # so it's easy to track coverage improvements over time and spot regressions.
+name: Fuzzing
+
 on:
   schedule:
     - cron: '0 14 * * *'   # 14:00 UTC daily
