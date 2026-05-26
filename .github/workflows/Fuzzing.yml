@@ -546,7 +546,7 @@ jobs:
 
       - name: Delete per-format coverage artifacts
         if: steps.download_coverage.outcome == 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const arts = await github.rest.actions.listWorkflowRunArtifacts({
@@ -578,7 +578,7 @@ jobs:
       - name: Check for crash artifacts
         if: needs.fuzz.result == 'cancelled'
         id: probe
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const arts = await github.rest.actions.listWorkflowRunArtifacts({
