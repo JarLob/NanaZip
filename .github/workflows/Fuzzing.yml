@@ -469,7 +469,7 @@ jobs:
         with:
           name: coverage-${{ matrix.format }}
           path: fuzzers/coverage-${{ matrix.format }}.cov
-          retention-days: 7
+          retention-days: 1
 
       - name: Fail if crashes found
         if: |
