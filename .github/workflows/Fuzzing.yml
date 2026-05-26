@@ -1,5 +1,23 @@
-name: Fuzzing
-
+# Runs fuzzing of NanaZip specific codecs with ASan instrumentation on Windows.
+# Scheduled daily for 2 hours. Can also be triggered manually.
+# Additionally fuzzes PRs that touch relevant files for 10 minutes to catch obvious issues before merge.
+#
+# If secrets.CRASH_KEY is set, crash artifacts are encrypted so only team members with the key access can view them.
+# If the secret is not set crashes are available unencrypted, but it may reveal sensitive information.
+# For PRs, crashes that also reproduce on the base branch are filtered out to avoid noise from pre-existing issues.
+# Crashes found by 10 minutes PR fuzzing are always public.
+#
+# Found files that cause NanaZip ASAN instrumented builds to crash are stored in the crash artifacts.
+# Each crash file is a unique input that causes a crash, and ASan logs with stack traces are included for triaging
+# in a form of crash-894760843895934 (the input reproducer file) and crash-894760843895934.asan.2348 (the ASan log file).
+#
+# Fuzzing improves over time as more unique corpus inputs (test cases) are generated.
+# The corpus is stored as cache. This allows to have a single place with the most up-to-date corpus and
+# also makes it private to the project.
+# However it makes it prone to cache eviction, which would cause fuzzing to start from scratch with an empty corpus if
+# the workflow is not run for longer periods of time.
+# Each scheduled/dispatch run generates a static html coverage report that represents code covered by the current corpus,
+# so it's easy to track coverage improvements over time and spot regressions.
 on:
   schedule:
     - cron: '0 14 * * *'   # 14:00 UTC daily
@@ -546,9 +564,11 @@ jobs:
               core.info(`Deleted artifact: ${a.name}`);
             }
 
-  # Upload fuzzer binaries for local crash reproduction. Runs on failure
-  # (crash found) or cancellation (user may have cancelled after spotting a
-  # crash). On cancellation we probe for crash artifacts first — if none
+  # Upload fuzzer binaries.
+  # Overall it should be reproducible with local ASAN build,
+  # but just in case the crash is triaged much later for verification if something has changed since.
+  # Runs on failure (crash found) or cancellation (user may have cancelled after spotting a crash).
+  # On cancellation we probe for crash artifacts first — if none
   # were uploaded by any fuzz leg, we skip the binary upload.
   upload-binaries:
     needs: [build, fuzz]   # build is needed only for cache-key output reference
