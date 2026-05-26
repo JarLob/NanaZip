@@ -526,6 +526,26 @@ jobs:
           path: ${{ steps.package_coverage.outputs.artifact_path }}
           retention-days: 90
 
+      - name: Delete per-format coverage artifacts
+        if: steps.download_coverage.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const arts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            for (const a of arts.data.artifacts.filter(a => a.name.startsWith('coverage-') && !a.name.startsWith('coverage-report'))) {
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: a.id,
+              });
+              core.info(`Deleted artifact: ${a.name}`);
+            }
+
   # Upload fuzzer binaries for local crash reproduction. Runs on failure
   # (crash found) or cancellation (user may have cancelled after spotting a
   # crash). On cancellation we probe for crash artifacts first — if none
