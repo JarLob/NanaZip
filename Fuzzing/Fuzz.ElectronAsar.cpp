@@ -1,36 +1,43 @@
-// Fuzz.ElectronAsar.cpp - libFuzzer entry for the Electron asar handler.
-//
-// asar layout: [u32 pickle_var=4][u32 header_size][u32 header_buf_size]
-//              [u32 header_string_size][JSON string][padding to 4][payload]
-// with the parser-enforced relationships (see ElectronAsar.cpp:Open):
-//   pickle_var       == 4
-//   header_size      == 4 + header_buf_size
-//   header_string_size <= header_buf_size
-//
-// libFuzzer's generic byte-mutator essentially never satisfies all four at
-// once, so the parser bails at the very first sanity check. We override
-// LLVMFuzzerCustomMutator to (a) delegate to libFuzzer's mutator and then
-// (b) rewrite the 16-byte pickle header so the mutated input is always
-// well-formed enough to reach the JSON parse step.
+﻿/*
+ * PROJECT:    NanaZip
+ * FILE:       Fuzz.ElectronAsar.cpp
+ * PURPOSE:    libFuzzer harness for the Electron asar handler
+ *
+ * LICENSE:    The MIT License
+ *
+ * asar layout: [u32 pickle_var=4][u32 header_size][u32 header_buf_size]
+ *              [u32 header_string_size][JSON string][padding to 4][payload]
+ * with the parser-enforced relationships (see ElectronAsar.cpp:Open):
+ *   pickle_var       == 4
+ *   header_size      == 4 + header_buf_size
+ *   header_string_size <= header_buf_size
+ *
+ * libFuzzer's generic byte-mutator essentially never satisfies all four at
+ * once, so the parser bails at the very first sanity check. We override
+ * LLVMFuzzerCustomMutator to (a) delegate to libFuzzer's mutator and then
+ * (b) rewrite the 16-byte pickle header so the mutated input is always
+ * well-formed enough to reach the JSON parse step.
+ */
+
 #include "NanaZip.Codecs.Fuzz.h"
 #include <cstring>
 
 extern "C" size_t LLVMFuzzerMutate(uint8_t* Data, size_t Size, size_t MaxSize);
 
-static void WriteLE32(std::uint8_t* p, std::uint32_t v)
+static void WriteLE32(std::uint8_t* P, std::uint32_t V)
 {
-    p[0] = static_cast<std::uint8_t>(v);
-    p[1] = static_cast<std::uint8_t>(v >> 8);
-    p[2] = static_cast<std::uint8_t>(v >> 16);
-    p[3] = static_cast<std::uint8_t>(v >> 24);
+    P[0] = static_cast<std::uint8_t>(V);
+    P[1] = static_cast<std::uint8_t>(V >> 8);
+    P[2] = static_cast<std::uint8_t>(V >> 16);
+    P[3] = static_cast<std::uint8_t>(V >> 24);
 }
 
-static std::uint32_t ReadLE32(const std::uint8_t* p)
+static std::uint32_t ReadLE32(const std::uint8_t* P)
 {
-    return static_cast<std::uint32_t>(p[0])
-        | (static_cast<std::uint32_t>(p[1]) << 8)
-        | (static_cast<std::uint32_t>(p[2]) << 16)
-        | (static_cast<std::uint32_t>(p[3]) << 24);
+    return static_cast<std::uint32_t>(P[0])
+        | (static_cast<std::uint32_t>(P[1]) << 8)
+        | (static_cast<std::uint32_t>(P[2]) << 16)
+        | (static_cast<std::uint32_t>(P[3]) << 24);
 }
 
 extern "C" size_t LLVMFuzzerCustomMutator(
@@ -65,8 +72,10 @@ extern "C" size_t LLVMFuzzerCustomMutator(
     return NewSize;
 }
 
-extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
+extern "C" int LLVMFuzzerTestOneInput(
+    const std::uint8_t* Data,
+    std::size_t Size)
 {
-    NanaZip::Fuzz::RunFuzzCase(2, data, size);
+    NanaZip::Fuzz::RunFuzzCase(2, Data, Size);
     return 0;
 }

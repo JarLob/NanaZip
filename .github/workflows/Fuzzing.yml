@@ -1,4 +1,4 @@
-# Runs fuzzing of NanaZip specific codecs with ASan instrumentation on Windows.
+﻿# Runs fuzzing of NanaZip specific codecs with ASan instrumentation on Windows.
 # Scheduled daily for 2 hours. Can also be triggered manually.
 # Additionally fuzzes PRs that touch relevant files for 10 minutes to catch obvious issues before merge.
 #

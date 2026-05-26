@@ -1,4 +1,4 @@
-/*
+﻿/*
  * PROJECT:    NanaZip
  * FILE:       NanaZip.Codecs.Fuzz.h
  * PURPOSE:    Shared libFuzzer harness scaffolding for NanaZip-specific
@@ -7,7 +7,7 @@
  * LICENSE:    The MIT License
  *
  * Each per-format Fuzz.<Format>.cpp defines LLVMFuzzerTestOneInput and calls
- * RunFuzzCase(kFormatIndex, data, size). The harness loads the already-built
+ * RunFuzzCase(FormatIndex, Data, Size). The harness loads the already-built
  * NanaZip.Codecs.dll (link with the ASan build under Output\Binaries\...) and
  * uses its exported 7-Zip-style CreateObject to instantiate the handler, so
  * no NanaZip object files need to be compiled into the fuzz binary.
@@ -59,18 +59,18 @@ namespace NanaZip::Fuzz
     {
         // The DLL is expected to live next to the fuzz binary (same directory
         // we are launched from in the typical case).
-        HMODULE module = ::LoadLibraryW(L"NanaZip.Codecs.dll");
-        if (!module)
+        HMODULE Module = ::LoadLibraryW(L"NanaZip.Codecs.dll");
+        if (!Module)
         {
             std::abort();
         }
-        auto fn = reinterpret_cast<CreateObjectFn>(
-            ::GetProcAddress(module, "CreateObject"));
-        if (!fn)
+        auto Fn = reinterpret_cast<CreateObjectFn>(
+            ::GetProcAddress(Module, "CreateObject"));
+        if (!Fn)
         {
             std::abort();
         }
-        return fn;
+        return Fn;
     }
 
     inline GUID MakeArchiveClsid(std::uint32_t ProviderIndex)
@@ -80,15 +80,15 @@ namespace NanaZip::Fuzz
         //   ArchiverProviderIdBase = 0x4123374B00000000
         const std::uint64_t Id =
             0x4123374B00000000ULL | std::uint64_t(ProviderIndex);
-        GUID g;
-        g.Data1 = SevenZipGuidData1;
-        g.Data2 = SevenZipGuidData2;
-        g.Data3 = SevenZipGuidData3Common;
-        for (int i = 0; i < 8; ++i)
+        GUID Guid;
+        Guid.Data1 = SevenZipGuidData1;
+        Guid.Data2 = SevenZipGuidData2;
+        Guid.Data3 = SevenZipGuidData3Common;
+        for (int I = 0; I < 8; ++I)
         {
-            g.Data4[i] = static_cast<std::uint8_t>(Id >> (i * 8));
+            Guid.Data4[I] = static_cast<std::uint8_t>(Id >> (I * 8));
         }
-        return g;
+        return Guid;
     }
 
     template <typename Interface>
@@ -97,107 +97,112 @@ namespace NanaZip::Fuzz
     public:
         ULONG STDMETHODCALLTYPE AddRef() override
         {
-            return ++m_ref;
+            return ++m_Ref;
         }
         ULONG STDMETHODCALLTYPE Release() override
         {
-            ULONG v = --m_ref;
-            if (v == 0) delete this;
-            return v;
+            ULONG Value = --m_Ref;
+            if (Value == 0) delete this;
+            return Value;
         }
     protected:
         virtual ~FuzzComBase() = default;
     private:
-        std::atomic<ULONG> m_ref{ 1 };
+        std::atomic<ULONG> m_Ref{ 1 };
     };
 
     class InMemoryInStream final : public FuzzComBase<IInStream>
     {
     public:
-        InMemoryInStream(const std::uint8_t* data, std::size_t size) noexcept
-            : m_data(data), m_size(size), m_pos(0) {}
+        InMemoryInStream(
+            const std::uint8_t* Data,
+            std::size_t Size) noexcept
+            : m_Data(Data), m_Size(Size), m_Pos(0) {}
 
-        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override
+        HRESULT STDMETHODCALLTYPE QueryInterface(
+            REFIID Riid, void** Out) override
         {
-            if (!out) return E_POINTER;
-            if (riid == IID_IUnknown ||
-                riid == __uuidof(ISequentialInStream) ||
-                riid == __uuidof(IInStream))
+            if (!Out) return E_POINTER;
+            if (Riid == IID_IUnknown ||
+                Riid == __uuidof(ISequentialInStream) ||
+                Riid == __uuidof(IInStream))
             {
-                *out = static_cast<IInStream*>(this);
+                *Out = static_cast<IInStream*>(this);
                 this->AddRef();
                 return S_OK;
             }
-            *out = nullptr;
+            *Out = nullptr;
             return E_NOINTERFACE;
         }
 
         HRESULT STDMETHODCALLTYPE Read(
-            void* data, UINT32 size, UINT32* processed) override
+            void* Data, UINT32 Size, UINT32* ProcessedSize) override
         {
-            std::uint64_t remaining = (m_pos < m_size) ? (m_size - m_pos) : 0;
-            UINT32 toRead = (size < remaining)
-                ? size
-                : static_cast<UINT32>(remaining);
-            if (toRead && data)
+            std::uint64_t Remaining =
+                (m_Pos < m_Size) ? (m_Size - m_Pos) : 0;
+            UINT32 ToRead = (Size < Remaining)
+                ? Size
+                : static_cast<UINT32>(Remaining);
+            if (ToRead && Data)
             {
-                std::memcpy(data, m_data + m_pos, toRead);
+                std::memcpy(Data, m_Data + m_Pos, ToRead);
             }
-            m_pos += toRead;
-            if (processed) *processed = toRead;
+            m_Pos += ToRead;
+            if (ProcessedSize) *ProcessedSize = ToRead;
             return S_OK;
         }
 
         HRESULT STDMETHODCALLTYPE Seek(
-            INT64 offset, UINT32 origin, UINT64* newPos) override
+            INT64 Offset, UINT32 Origin, UINT64* NewPosition) override
         {
-            std::int64_t base = 0;
-            switch (origin)
+            std::int64_t Base = 0;
+            switch (Origin)
             {
-            case STREAM_SEEK_SET: base = 0; break;
-            case STREAM_SEEK_CUR: base = static_cast<std::int64_t>(m_pos); break;
-            case STREAM_SEEK_END: base = static_cast<std::int64_t>(m_size); break;
+            case STREAM_SEEK_SET: Base = 0; break;
+            case STREAM_SEEK_CUR: Base = static_cast<std::int64_t>(m_Pos); break;
+            case STREAM_SEEK_END: Base = static_cast<std::int64_t>(m_Size); break;
             default: return E_INVALIDARG;
             }
-            std::int64_t target = base + offset;
-            if (target < 0)
+            std::int64_t Target = Base + Offset;
+            if (Target < 0)
             {
                 return HRESULT_FROM_WIN32(ERROR_NEGATIVE_SEEK);
             }
             // Seeking past EOF is allowed; subsequent reads return zero bytes.
-            m_pos = static_cast<std::uint64_t>(target);
-            if (newPos) *newPos = m_pos;
+            m_Pos = static_cast<std::uint64_t>(Target);
+            if (NewPosition) *NewPosition = m_Pos;
             return S_OK;
         }
 
     private:
-        const std::uint8_t* m_data;
-        std::size_t m_size;
-        std::uint64_t m_pos;
+        const std::uint8_t* m_Data;
+        std::size_t m_Size;
+        std::uint64_t m_Pos;
     };
 
     class NullOutStream final : public FuzzComBase<ISequentialOutStream>
     {
     public:
-        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override
+        HRESULT STDMETHODCALLTYPE QueryInterface(
+            REFIID Riid, void** Out) override
         {
-            if (!out) return E_POINTER;
-            if (riid == IID_IUnknown ||
-                riid == __uuidof(ISequentialOutStream))
+            if (!Out) return E_POINTER;
+            if (Riid == IID_IUnknown ||
+                Riid == __uuidof(ISequentialOutStream))
             {
-                *out = static_cast<ISequentialOutStream*>(this);
+                *Out = static_cast<ISequentialOutStream*>(this);
                 this->AddRef();
                 return S_OK;
             }
-            *out = nullptr;
+            *Out = nullptr;
             return E_NOINTERFACE;
         }
 
         HRESULT STDMETHODCALLTYPE Write(
-            const void* /*data*/, UINT32 size, UINT32* processed) override
+            const void* /*Data*/, UINT32 Size, UINT32* ProcessedSize) override
         {
             // Discard. We only care that the decode path executes under ASan.
-            if (processed) *processed = size;
+            if (ProcessedSize) *ProcessedSize = Size;
             return S_OK;
         }
     };
@@ -205,18 +210,19 @@ namespace NanaZip::Fuzz
     class NullExtractCallback final : public FuzzComBase<IArchiveExtractCallback>
     {
     public:
-        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override
+        HRESULT STDMETHODCALLTYPE QueryInterface(
+            REFIID Riid, void** Out) override
         {
-            if (!out) return E_POINTER;
-            if (riid == IID_IUnknown ||
-                riid == __uuidof(IProgress) ||
-                riid == __uuidof(IArchiveExtractCallback))
+            if (!Out) return E_POINTER;
+            if (Riid == IID_IUnknown ||
+                Riid == __uuidof(IProgress) ||
+                Riid == __uuidof(IArchiveExtractCallback))
             {
-                *out = static_cast<IArchiveExtractCallback*>(this);
+                *Out = static_cast<IArchiveExtractCallback*>(this);
                 this->AddRef();
                 return S_OK;
             }
-            *out = nullptr;
+            *Out = nullptr;
             return E_NOINTERFACE;
         }
 
@@ -224,15 +230,15 @@ namespace NanaZip::Fuzz
         HRESULT STDMETHODCALLTYPE SetCompleted(const PUINT64) override { return S_OK; }
 
         HRESULT STDMETHODCALLTYPE GetStream(
-            UINT32, ISequentialOutStream** stream, INT32 askMode) override
+            UINT32, ISequentialOutStream** OutStream, INT32 AskMode) override
         {
-            if (!stream) return E_POINTER;
-            if (askMode == SevenZipExtractAskModeSkip)
+            if (!OutStream) return E_POINTER;
+            if (AskMode == SevenZipExtractAskModeSkip)
             {
-                *stream = nullptr;
+                *OutStream = nullptr;
                 return S_OK;
             }
-            *stream = new NullOutStream();
+            *OutStream = new NullOutStream();
             return S_OK;
         }
 
@@ -240,41 +246,41 @@ namespace NanaZip::Fuzz
         HRESULT STDMETHODCALLTYPE SetOperationResult(INT32) override { return S_OK; }
     };
 
-    inline IInArchive* CreateHandler(std::uint32_t formatIndex)
+    inline IInArchive* CreateHandler(std::uint32_t FormatIndex)
     {
-        static CreateObjectFn s_create = LoadCreateObject();
-        GUID clsid = MakeArchiveClsid(formatIndex);
-        GUID iid = __uuidof(IInArchive);
-        void* obj = nullptr;
-        if (FAILED(s_create(&clsid, &iid, &obj)) || !obj)
+        static CreateObjectFn CreateFn = LoadCreateObject();
+        GUID Clsid = MakeArchiveClsid(FormatIndex);
+        GUID Iid = __uuidof(IInArchive);
+        void* Object = nullptr;
+        if (FAILED(CreateFn(&Clsid, &Iid, &Object)) || !Object)
         {
             return nullptr;
         }
-        return static_cast<IInArchive*>(obj);
+        return static_cast<IInArchive*>(Object);
     }
 
     inline void RunFuzzCase(
-        std::uint32_t formatIndex,
-        const std::uint8_t* data,
-        std::size_t size)
+        std::uint32_t FormatIndex,
+        const std::uint8_t* Data,
+        std::size_t Size)
     {
-        IInArchive* archive = CreateHandler(formatIndex);
-        if (!archive) return;
+        IInArchive* Archive = CreateHandler(FormatIndex);
+        if (!Archive) return;
 
         // The InMemoryInStream and NullExtractCallback start at refcount 1; the
         // handler will AddRef/Release as needed. Match that by holding our own
         // ref via stack ownership and Release() at the end.
-        InMemoryInStream* stream = new InMemoryInStream(data, size);
-        UINT64 maxCheck = 1ULL << 24; // 16 MiB header search window cap
-        if (archive->Open(stream, &maxCheck, nullptr) == S_OK)
+        InMemoryInStream* Stream = new InMemoryInStream(Data, Size);
+        UINT64 MaxCheck = 1ULL << 24; // 16 MiB header search window cap
+        if (Archive->Open(Stream, &MaxCheck, nullptr) == S_OK)
         {
-            UINT32 num = 0;
-            archive->GetNumberOfItems(&num);
+            UINT32 Num = 0;
+            Archive->GetNumberOfItems(&Num);
             // Cap iterations so adversarial inputs claiming billions of entries
             // don't waste fuzzing budget.
-            if (num > 4096) num = 4096;
+            if (Num > 4096) Num = 4096;
 
-            static const PROPID kProps[] = {
+            static const PROPID Props[] = {
                 SevenZipArchivePath,
                 SevenZipArchiveSize,
                 SevenZipArchivePackSize,
@@ -283,13 +289,13 @@ namespace NanaZip::Fuzz
                 SevenZipArchiveAttributes,
                 SevenZipArchiveSymbolicLink,
             };
-            for (UINT32 i = 0; i < num; ++i)
+            for (UINT32 I = 0; I < Num; ++I)
             {
-                for (PROPID p : kProps)
+                for (PROPID P : Props)
                 {
-                    PROPVARIANT v{};
-                    archive->GetProperty(i, p, &v);
-                    ::PropVariantClear(&v);
+                    PROPVARIANT V{};
+                    Archive->GetProperty(I, P, &V);
+                    ::PropVariantClear(&V);
                 }
             }
 
@@ -297,40 +303,40 @@ namespace NanaZip::Fuzz
             // (nullptr, 0xFFFFFFFF) which triggers a null-deref bug in
             // the NanaZip handlers (Indices[i] instead of ActualFileIndex
             // at the GetStream call).
-            std::vector<UINT32> indices(num);
-            for (UINT32 i = 0; i < num; ++i)
-                indices[i] = i;
+            std::vector<UINT32> Indices(Num);
+            for (UINT32 I = 0; I < Num; ++I)
+                Indices[I] = I;
 
-            NullExtractCallback* cb = new NullExtractCallback();
-            archive->Extract(indices.data(), num, TRUE, cb);
-            cb->Release();
+            NullExtractCallback* Callback = new NullExtractCallback();
+            Archive->Extract(Indices.data(), Num, TRUE, Callback);
+            Callback->Release();
 
-            archive->Close();
+            Archive->Close();
         }
-        stream->Release();
-        archive->Release();
+        Stream->Release();
+        Archive->Release();
     }
 
     // Same as RunFuzzCase but skips the Extract call. Use for handlers where
     // Extract is a trivial read+write with no parsing, but has unchecked
     // attacker-controlled allocation sizes that cause OOMs on most iterations.
     inline void RunFuzzCaseNoExtract(
-        std::uint32_t formatIndex,
-        const std::uint8_t* data,
-        std::size_t size)
+        std::uint32_t FormatIndex,
+        const std::uint8_t* Data,
+        std::size_t Size)
     {
-        IInArchive* archive = CreateHandler(formatIndex);
-        if (!archive) return;
+        IInArchive* Archive = CreateHandler(FormatIndex);
+        if (!Archive) return;
 
-        InMemoryInStream* stream = new InMemoryInStream(data, size);
-        UINT64 maxCheck = 1ULL << 24;
-        if (archive->Open(stream, &maxCheck, nullptr) == S_OK)
+        InMemoryInStream* Stream = new InMemoryInStream(Data, Size);
+        UINT64 MaxCheck = 1ULL << 24;
+        if (Archive->Open(Stream, &MaxCheck, nullptr) == S_OK)
         {
-            UINT32 num = 0;
-            archive->GetNumberOfItems(&num);
-            if (num > 4096) num = 4096;
+            UINT32 Num = 0;
+            Archive->GetNumberOfItems(&Num);
+            if (Num > 4096) Num = 4096;
 
-            static const PROPID kProps[] = {
+            static const PROPID Props[] = {
                 SevenZipArchivePath,
                 SevenZipArchiveSize,
                 SevenZipArchivePackSize,
@@ -339,20 +345,20 @@ namespace NanaZip::Fuzz
                 SevenZipArchiveAttributes,
                 SevenZipArchiveSymbolicLink,
             };
-            for (UINT32 i = 0; i < num; ++i)
+            for (UINT32 I = 0; I < Num; ++I)
             {
-                for (PROPID p : kProps)
+                for (PROPID P : Props)
                 {
-                    PROPVARIANT v{};
-                    archive->GetProperty(i, p, &v);
-                    ::PropVariantClear(&v);
+                    PROPVARIANT V{};
+                    Archive->GetProperty(I, P, &V);
+                    ::PropVariantClear(&V);
                 }
             }
 
-            archive->Close();
+            Archive->Close();
         }
-        stream->Release();
-        archive->Release();
+        Stream->Release();
+        Archive->Release();
     }
 }
 

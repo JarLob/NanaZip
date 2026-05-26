@@ -1,4 +1,4 @@
-/*
+﻿/*
  * PROJECT:    NanaZip
  * FILE:       NanaZip.Core.Fuzz.h
  * PURPOSE:    libFuzzer scaffolding for upstream-7-Zip handlers shipped by
@@ -30,8 +30,8 @@ namespace NanaZip::Fuzz::Core
     using GetHandlerProperty2Fn = HRESULT(WINAPI*)(UINT32, PROPID, PROPVARIANT*);
 
     // 7-Zip NHandlerPropID enum values from IArchive.h.
-    constexpr PROPID kHandlerPropName    = 0;
-    constexpr PROPID kHandlerPropClassID = 1;
+    constexpr PROPID HandlerPropName    = 0;
+    constexpr PROPID HandlerPropClassId = 1;
 
     struct CoreApi
     {
@@ -43,108 +43,108 @@ namespace NanaZip::Fuzz::Core
 
     inline CoreApi const& LoadCoreApi()
     {
-        static CoreApi api = []() -> CoreApi {
-            CoreApi a{};
-            a.Module = ::LoadLibraryW(L"NanaZip.Core.dll");
-            if (!a.Module) std::abort();
-            a.CreateObject = reinterpret_cast<CreateObjectFn>(
-                ::GetProcAddress(a.Module, "CreateObject"));
-            a.GetNumberOfFormats = reinterpret_cast<GetNumberOfFormatsFn>(
-                ::GetProcAddress(a.Module, "GetNumberOfFormats"));
-            a.GetHandlerProperty2 = reinterpret_cast<GetHandlerProperty2Fn>(
-                ::GetProcAddress(a.Module, "GetHandlerProperty2"));
-            if (!a.CreateObject || !a.GetNumberOfFormats || !a.GetHandlerProperty2)
+        static CoreApi Api = []() -> CoreApi {
+            CoreApi A{};
+            A.Module = ::LoadLibraryW(L"NanaZip.Core.dll");
+            if (!A.Module) std::abort();
+            A.CreateObject = reinterpret_cast<CreateObjectFn>(
+                ::GetProcAddress(A.Module, "CreateObject"));
+            A.GetNumberOfFormats = reinterpret_cast<GetNumberOfFormatsFn>(
+                ::GetProcAddress(A.Module, "GetNumberOfFormats"));
+            A.GetHandlerProperty2 = reinterpret_cast<GetHandlerProperty2Fn>(
+                ::GetProcAddress(A.Module, "GetHandlerProperty2"));
+            if (!A.CreateObject || !A.GetNumberOfFormats || !A.GetHandlerProperty2)
             {
                 std::abort();
             }
-            return a;
+            return A;
         }();
-        return api;
+        return Api;
     }
 
-    // Returns true and fills outClsid if a handler whose registered name
-    // matches `name` (case-sensitive) is found. The CLSID lives in a static
+    // Returns true and fills OutClsid if a handler whose registered name
+    // matches `Name` (case-sensitive) is found. The CLSID lives in a static
     // cache so subsequent calls are free.
-    inline bool ResolveHandlerClsid(const wchar_t* name, GUID& outClsid)
+    inline bool ResolveHandlerClsid(const wchar_t* Name, GUID& OutClsid)
     {
-        CoreApi const& api = LoadCoreApi();
-        UINT32 count = 0;
-        if (FAILED(api.GetNumberOfFormats(&count))) return false;
+        CoreApi const& Api = LoadCoreApi();
+        UINT32 Count = 0;
+        if (FAILED(Api.GetNumberOfFormats(&Count))) return false;
 
-        for (UINT32 i = 0; i < count; ++i)
+        for (UINT32 I = 0; I < Count; ++I)
         {
-            PROPVARIANT vName{};
-            if (FAILED(api.GetHandlerProperty2(i, kHandlerPropName, &vName)))
+            PROPVARIANT VName{};
+            if (FAILED(Api.GetHandlerProperty2(I, HandlerPropName, &VName)))
             {
                 continue;
             }
-            bool match = (vName.vt == VT_BSTR && vName.bstrVal &&
-                std::wcscmp(vName.bstrVal, name) == 0);
-            ::PropVariantClear(&vName);
-            if (!match) continue;
+            bool Match = (VName.vt == VT_BSTR && VName.bstrVal &&
+                std::wcscmp(VName.bstrVal, Name) == 0);
+            ::PropVariantClear(&VName);
+            if (!Match) continue;
 
-            PROPVARIANT vClsid{};
-            if (FAILED(api.GetHandlerProperty2(i, kHandlerPropClassID, &vClsid)))
+            PROPVARIANT VClsid{};
+            if (FAILED(Api.GetHandlerProperty2(I, HandlerPropClassId, &VClsid)))
             {
                 return false;
             }
             // ClassID is delivered as a 16-byte binary blob in a BSTR.
-            bool ok = false;
-            if (vClsid.vt == VT_BSTR && vClsid.bstrVal &&
-                ::SysStringByteLen(vClsid.bstrVal) >= sizeof(GUID))
+            bool Ok = false;
+            if (VClsid.vt == VT_BSTR && VClsid.bstrVal &&
+                ::SysStringByteLen(VClsid.bstrVal) >= sizeof(GUID))
             {
-                std::memcpy(&outClsid, vClsid.bstrVal, sizeof(GUID));
-                ok = true;
+                std::memcpy(&OutClsid, VClsid.bstrVal, sizeof(GUID));
+                Ok = true;
             }
-            ::PropVariantClear(&vClsid);
-            return ok;
+            ::PropVariantClear(&VClsid);
+            return Ok;
         }
         return false;
     }
 
-    inline IInArchive* CreateHandlerByName(const wchar_t* name)
+    inline IInArchive* CreateHandlerByName(const wchar_t* Name)
     {
         // Cache the resolved CLSID per name across iterations.
-        static std::atomic<bool> s_resolved{ false };
-        static GUID s_clsid{};
-        static const wchar_t* s_name = nullptr;
+        static std::atomic<bool> Resolved{ false };
+        static GUID CachedClsid{};
+        static const wchar_t* CachedName = nullptr;
 
-        if (!s_resolved.load(std::memory_order_acquire) || s_name != name)
+        if (!Resolved.load(std::memory_order_acquire) || CachedName != Name)
         {
-            GUID g{};
-            if (!ResolveHandlerClsid(name, g)) return nullptr;
-            s_clsid = g;
-            s_name = name;
-            s_resolved.store(true, std::memory_order_release);
+            GUID Guid{};
+            if (!ResolveHandlerClsid(Name, Guid)) return nullptr;
+            CachedClsid = Guid;
+            CachedName = Name;
+            Resolved.store(true, std::memory_order_release);
         }
 
-        CoreApi const& api = LoadCoreApi();
-        GUID iid = __uuidof(IInArchive);
-        void* obj = nullptr;
-        if (FAILED(api.CreateObject(&s_clsid, &iid, &obj)) || !obj)
+        CoreApi const& Api = LoadCoreApi();
+        GUID Iid = __uuidof(IInArchive);
+        void* Object = nullptr;
+        if (FAILED(Api.CreateObject(&CachedClsid, &Iid, &Object)) || !Object)
         {
             return nullptr;
         }
-        return static_cast<IInArchive*>(obj);
+        return static_cast<IInArchive*>(Object);
     }
 
     inline void RunFuzzCaseByName(
-        const wchar_t* handlerName,
-        const std::uint8_t* data,
-        std::size_t size)
+        const wchar_t* HandlerName,
+        const std::uint8_t* Data,
+        std::size_t Size)
     {
-        IInArchive* archive = CreateHandlerByName(handlerName);
-        if (!archive) return;
+        IInArchive* Archive = CreateHandlerByName(HandlerName);
+        if (!Archive) return;
 
-        InMemoryInStream* stream = new InMemoryInStream(data, size);
-        UINT64 maxCheck = 1ULL << 24; // 16 MiB header search window cap
-        if (archive->Open(stream, &maxCheck, nullptr) == S_OK)
+        InMemoryInStream* Stream = new InMemoryInStream(Data, Size);
+        UINT64 MaxCheck = 1ULL << 24; // 16 MiB header search window cap
+        if (Archive->Open(Stream, &MaxCheck, nullptr) == S_OK)
         {
-            UINT32 num = 0;
-            archive->GetNumberOfItems(&num);
-            if (num > 4096) num = 4096;
+            UINT32 Num = 0;
+            Archive->GetNumberOfItems(&Num);
+            if (Num > 4096) Num = 4096;
 
-            static const PROPID kProps[] = {
+            static const PROPID Props[] = {
                 SevenZipArchivePath,
                 SevenZipArchiveSize,
                 SevenZipArchivePackSize,
@@ -153,13 +153,13 @@ namespace NanaZip::Fuzz::Core
                 SevenZipArchiveAttributes,
                 SevenZipArchiveSymbolicLink,
             };
-            for (UINT32 i = 0; i < num; ++i)
+            for (UINT32 I = 0; I < Num; ++I)
             {
-                for (PROPID p : kProps)
+                for (PROPID P : Props)
                 {
-                    PROPVARIANT v{};
-                    archive->GetProperty(i, p, &v);
-                    ::PropVariantClear(&v);
+                    PROPVARIANT V{};
+                    Archive->GetProperty(I, P, &V);
+                    ::PropVariantClear(&V);
                 }
             }
 
@@ -167,18 +167,18 @@ namespace NanaZip::Fuzz::Core
             // (nullptr, 0xFFFFFFFF) which triggers a null-deref bug in
             // the NanaZip handlers (Indices[i] instead of ActualFileIndex
             // at the GetStream call).
-            std::vector<UINT32> indices(num);
-            for (UINT32 i = 0; i < num; ++i)
-                indices[i] = i;
+            std::vector<UINT32> Indices(Num);
+            for (UINT32 I = 0; I < Num; ++I)
+                Indices[I] = I;
 
-            NullExtractCallback* cb = new NullExtractCallback();
-            archive->Extract(indices.data(), num, TRUE, cb);
-            cb->Release();
+            NullExtractCallback* Callback = new NullExtractCallback();
+            Archive->Extract(Indices.data(), Num, TRUE, Callback);
+            Callback->Release();
 
-            archive->Close();
+            Archive->Close();
         }
-        stream->Release();
-        archive->Release();
+        Stream->Release();
+        Archive->Release();
     }
 }
 
