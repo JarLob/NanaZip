@@ -549,6 +549,25 @@ namespace NanaZip::Codecs::Archive
                         {
                             Entry.CompressedSize = Entry.Size;
                         }
+                        // Cap sizes to available bundle data to prevent
+                        // OOM allocations in Extract.
+                        {
+                            std::int64_t Available =
+                                static_cast<std::int64_t>(BundleSize)
+                                - Entry.Offset;
+                            if (Available < 0)
+                            {
+                                Available = 0;
+                            }
+                            if (Entry.Size > Available)
+                            {
+                                Entry.Size = Available;
+                            }
+                            if (Entry.CompressedSize > Available)
+                            {
+                                Entry.CompressedSize = Available;
+                            }
+                        }
                         this->ValidateBound(
                             HeaderBufferSize,
                             Current,

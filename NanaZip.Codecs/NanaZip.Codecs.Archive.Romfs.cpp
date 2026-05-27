@@ -251,6 +251,23 @@ namespace NanaZip::Codecs::Archive
                 if ("." != FileName && ".." != FileName)
                 {
                     Information.Offset = Offset;
+                    // Cap Size to available data within the filesystem
+                    // image. Without this, a crafted Size (BE u32 up to
+                    // ~4 GB) causes OOM in Extract and SymbolicLink
+                    // property reads which allocate Size bytes.
+                    if (Information.Offset < m_FullSize)
+                    {
+                        std::uint32_t Available =
+                            m_FullSize - Information.Offset;
+                        if (Information.Size > Available)
+                        {
+                            Information.Size = Available;
+                        }
+                    }
+                    else
+                    {
+                        Information.Size = 0;
+                    }
                     Information.Path = Path + FileName;
 
                     if (RomfsFileType::Directory == Information.Type)
@@ -376,6 +393,11 @@ namespace NanaZip::Codecs::Archive
 
                 this->m_FullSize = this->ReadUInt32(
                     &HeaderBuffer[offsetof(RomfsHeader, FullSize)]);
+                if (this->m_FullSize > BundleSize)
+                {
+                    this->m_FullSize =
+                        static_cast<std::uint32_t>(BundleSize);
+                }
                 this->m_VolumeName = std::string(
                     static_cast<std::size_t>(
                         BundleSize - Offset < g_RomfsMaximumPathLength
