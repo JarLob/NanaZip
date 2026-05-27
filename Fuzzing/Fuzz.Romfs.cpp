@@ -11,8 +11,6 @@
  *   bytes [12..15]: Checksum (BE u32) - not verified by NanaZip
  *   bytes [16..]: volume name (null-terminated, 16-byte aligned) then file headers
  *
- * Each file header has a Size field (BE u32) that flows into
- * std::vector<uint8_t> Buffer(Size) during Extract - unchecked, causing OOM.
  * The custom mutator fixes the magic and caps FullSize to input length.
  */
 
@@ -75,42 +73,5 @@ extern "C" int LLVMFuzzerTestOneInput(
     const std::uint8_t* Data,
     std::size_t Size)
 {
-    // Like RunFuzzCaseNoExtract but WITHOUT querying SevenZipArchiveSymbolicLink.
-    // The Romfs handler allocates std::string(Information.Size, '\0') for symlinks
-    // where Size is an uncapped attacker-controlled BE u32 - every symlink entry
-    // with a large Size triggers a multi-GB OOM that drowns the campaign.
-    IInArchive* Archive = NanaZip::Fuzz::CreateHandler(3);
-    if (!Archive) return 0;
-
-    auto* Stream = new NanaZip::Fuzz::InMemoryInStream(Data, Size);
-    UINT64 MaxCheck = 1ULL << 24;
-    if (Archive->Open(Stream, &MaxCheck, nullptr) == S_OK)
-    {
-        UINT32 Num = 0;
-        Archive->GetNumberOfItems(&Num);
-        if (Num > 4096) Num = 4096;
-
-        static const PROPID Props[] = {
-            SevenZipArchivePath,
-            SevenZipArchiveSize,
-            SevenZipArchivePackSize,
-            SevenZipArchiveIsDirectory,
-            SevenZipArchiveModifiedTime,
-            SevenZipArchiveAttributes,
-            // SevenZipArchiveSymbolicLink omitted: uncapped Size -> OOM
-        };
-        for (UINT32 I = 0; I < Num; ++I)
-        {
-            for (PROPID P : Props)
-            {
-                PROPVARIANT V{};
-                Archive->GetProperty(I, P, &V);
-                ::PropVariantClear(&V);
-            }
-        }
-        Archive->Close();
-    }
-    Stream->Release();
-    Archive->Release();
-    return 0;
+    return NanaZip::Fuzz::RunFuzzCase(3, Data, Size);
 }

@@ -24,6 +24,10 @@
  * POSITION shifts whenever libFuzzer changes the input length) almost never
  * satisfy all constraints at once. We fix the footer + vbmeta-header after
  * every mutation so the fuzzer always reaches the descriptor-walk code.
+ *
+ * The mutator also pins authentication_data_block_size=0, descriptors_offset=0,
+ * and computes descriptors_size to fill the available vbmeta space, so the
+ * descriptor parsing loop operates over the fuzzed bytes after the header.
  */
 
 #include "NanaZip.Core.Fuzz.h"
@@ -70,6 +74,13 @@ extern "C" size_t LLVMFuzzerCustomMutator(
     WriteBE32(Data + 0, 0x41564230);   // "AVB0"
     WriteBE32(Data + 4, 1);            // required_libavb_version_major
 
+    // authentication_data_block_size = 0 (skip auth block so
+    // descriptors start right after the 256-byte header)
+    WriteBE64(Data + 8, 0);
+
+    // descriptors_offset = 0 (relative to end of header + auth block)
+    WriteBE64(Data + 96, 0);
+
     // --- Fix footer (last 64 bytes) ---
     std::uint8_t* Footer = Data + NewSize - FooterSize;
 
@@ -93,6 +104,9 @@ extern "C" size_t LLVMFuzzerCustomMutator(
     if (VbmetaSize > 65536) VbmetaSize = 65536;
     if (VbmetaSize < VbmetaHeaderSize) VbmetaSize = VbmetaHeaderSize;
     WriteBE64(Footer + 28, VbmetaSize);
+
+    // descriptors_size = all space after the 256-byte header
+    WriteBE64(Data + 104, VbmetaSize - VbmetaHeaderSize);
 
     // Reserved bytes 36..63 must be zero.
     std::memset(Footer + 36, 0, 28);

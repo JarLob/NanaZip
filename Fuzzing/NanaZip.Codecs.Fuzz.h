@@ -316,50 +316,6 @@ namespace NanaZip::Fuzz
         Stream->Release();
         Archive->Release();
     }
-
-    // Same as RunFuzzCase but skips the Extract call. Use for handlers where
-    // Extract is a trivial read+write with no parsing, but has unchecked
-    // attacker-controlled allocation sizes that cause OOMs on most iterations.
-    inline void RunFuzzCaseNoExtract(
-        std::uint32_t FormatIndex,
-        const std::uint8_t* Data,
-        std::size_t Size)
-    {
-        IInArchive* Archive = CreateHandler(FormatIndex);
-        if (!Archive) return;
-
-        InMemoryInStream* Stream = new InMemoryInStream(Data, Size);
-        UINT64 MaxCheck = 1ULL << 24;
-        if (Archive->Open(Stream, &MaxCheck, nullptr) == S_OK)
-        {
-            UINT32 Num = 0;
-            Archive->GetNumberOfItems(&Num);
-            if (Num > 4096) Num = 4096;
-
-            static const PROPID Props[] = {
-                SevenZipArchivePath,
-                SevenZipArchiveSize,
-                SevenZipArchivePackSize,
-                SevenZipArchiveIsDirectory,
-                SevenZipArchiveModifiedTime,
-                SevenZipArchiveAttributes,
-                SevenZipArchiveSymbolicLink,
-            };
-            for (UINT32 I = 0; I < Num; ++I)
-            {
-                for (PROPID P : Props)
-                {
-                    PROPVARIANT V{};
-                    Archive->GetProperty(I, P, &V);
-                    ::PropVariantClear(&V);
-                }
-            }
-
-            Archive->Close();
-        }
-        Stream->Release();
-        Archive->Release();
-    }
 }
 
 #endif // !NANAZIP_CODECS_FUZZ

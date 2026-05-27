@@ -76,6 +76,5 @@ extern "C" int LLVMFuzzerTestOneInput(
     const std::uint8_t* Data,
     std::size_t Size)
 {
-    NanaZip::Fuzz::RunFuzzCaseNoExtract(1, Data, Size);
-    return 0;
+    return NanaZip::Fuzz::RunFuzzCase(1, Data, Size);
 }

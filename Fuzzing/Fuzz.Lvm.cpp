@@ -6,27 +6,35 @@
  *
  * LICENSE:    The MIT License
  *
- * LVM PV label lives in sector 1 (bytes 512..1023). Open2 gates:
- *   [512+0  .. 512+7 ]  memcmp "LABELONE"
- *   [512+8  .. 512+15]  sector_xl (LE u64) == 1
- *   [512+16 .. 512+19]  CRC32 == LvmCrcCalc(buf+20, 492)
- *                        (CRC-32/IEEE poly 0xEDB88320, init 0xf597a6cf,
- *                        no final XOR)
- *   [512+20 .. 512+23]  offsetToCont (LE u32) == 32
- *   [512+24 .. 512+31]  memcmp "LVM2 001"
+ * File layout (custom mutator enforces this on every iteration):
  *
- * PV header layout (all within CRC region, starting at label+32):
- *   +32..63 : pv_id (32 bytes, free)
- *   +64..71 : device_size_xl (LE u64)
- *   +72..87 : data area disk_locn[0] {offset:8, size:8}
- *             ... more data disk_locns until (0,0) terminator
- *   next 16 : metadata disk_locn[0] {offset:8, size:8}
- *             handler does meta.Alloc(size) -> null-deref if huge
+ *   Sector 0 (bytes 0..511) = metadata area:
+ *     [0x00..0x03]  metadata header CRC  (CRC of bytes [4..511])
+ *     [0x04..0x13]  FMTT_MAGIC  " LVM2 x[5A%r0N*>"
+ *     [0x14..0x17]  version = 1
+ *     [0x18..0x1F]  mda_header.Start = 0
+ *     [0x20..0x27]  mda_header.Size  = 512
+ *     [0x28..0x3F]  raw_locn[0] {Offset=0x58, Size=VgConfigSize,
+ *                                Checksum=CRC(vg_config), Flags=0}
+ *     [0x40..0x57]  raw_locn terminator (24 zero bytes)
+ *     [0x58..0x1FF] VG config text (fuzzed region, 424 bytes)
  *
- * The custom mutator (a) fixes the five label-gate fields, (b) terminates
- * the data disk_locn list immediately so the metadata disk_locn position is
- * known, (c) caps metadata size to 64 KiB to prevent the unchecked OOM,
- * and (d) recomputes the CRC.
+ *   Sector 1 (bytes 512..1023) = PV label:
+ *     [+0x00..+0x07]  "LABELONE"
+ *     [+0x08..+0x0F]  sector_xl = 1
+ *     [+0x10..+0x13]  label CRC  (CRC of label bytes [20..511])
+ *     [+0x14..+0x17]  offsetToCont = 32
+ *     [+0x18..+0x1F]  "LVM2 001"
+ *     [+0x20..+0x3F]  pv_id (32 bytes, fuzzed)
+ *     [+0x40..+0x47]  device_size_xl (fuzzed)
+ *     [+0x48..+0x57]  data disk_locn[0] = {0,0} (terminated)
+ *     [+0x58..+0x5F]  meta disk_locn offset = 0
+ *     [+0x60..+0x67]  meta disk_locn size   = 512
+ *
+ * Three CRC layers are recomputed after every mutation:
+ *   1. VG config CRC  -> raw_locn[0].Checksum
+ *   2. Metadata header CRC -> meta[0..3]
+ *   3. Label sector CRC -> label[16..19]
  */
 
 #include "NanaZip.Core.Fuzz.h"
@@ -77,22 +85,15 @@ static void WriteLE64(std::uint8_t* P, std::uint64_t V)
     WriteLE32(P + 4, static_cast<std::uint32_t>(V >> 32));
 }
 
-static std::uint64_t ReadLE64(const std::uint8_t* P)
-{
-    return static_cast<std::uint64_t>(P[0])
-        | (static_cast<std::uint64_t>(P[1]) << 8)
-        | (static_cast<std::uint64_t>(P[2]) << 16)
-        | (static_cast<std::uint64_t>(P[3]) << 24)
-        | (static_cast<std::uint64_t>(P[4]) << 32)
-        | (static_cast<std::uint64_t>(P[5]) << 40)
-        | (static_cast<std::uint64_t>(P[6]) << 48)
-        | (static_cast<std::uint64_t>(P[7]) << 56);
-}
-
 static constexpr std::size_t   SectorSize     = 512;
 static constexpr std::size_t   MinLvm         = SectorSize * 2;  // 1024
 static constexpr std::uint32_t LvmCrcInit     = 0xf597a6cfu;
-static constexpr std::uint64_t MaxMetaSize    = 65536;  // 64 KiB
+
+// Metadata area lives in sector 0. VG config text starts right after the
+// raw_locn terminator: offset 0x28 (first raw_locn) + 0x18 (entry) +
+// 0x18 (terminator) = 0x58.
+static constexpr std::size_t   VgConfigOffset = 0x58;
+static constexpr std::size_t   VgConfigSize   = SectorSize - VgConfigOffset;
 
 extern "C" size_t LLVMFuzzerCustomMutator(
     uint8_t* Data, size_t Size, size_t MaxSize, unsigned int /*Seed*/)
@@ -108,44 +109,59 @@ extern "C" size_t LLVMFuzzerCustomMutator(
     }
 
     std::uint8_t* Label = Data + SectorSize;   // sector 1
+    std::uint8_t* Meta  = Data;                // sector 0
 
-    // --- 1. Fix structural gate fields ---
+    // ---- Label sector (sector 1) structural gates ----
 
-    // [+0]  "LABELONE"
-    static const std::uint8_t LabelMagic[8] = {
-        'L','A','B','E','L','O','N','E'
+    std::memcpy(Label, "LABELONE", 8);              // +0
+    WriteLE64(Label + 8, 1);                         // +8  sector_xl
+    WriteLE32(Label + 20, 32);                       // +20 offsetToCont
+    std::memcpy(Label + 24, "LVM2 001", 8);          // +24
+
+    // Terminate data disk_locn list at label+72.
+    std::memset(Label + 72, 0, 16);
+
+    // Metadata disk_locn at label+88: points to sector 0.
+    WriteLE64(Label + 88, 0);                        // offset = 0
+    WriteLE64(Label + 96, SectorSize);               // size   = 512
+
+    // ---- Metadata area (sector 0) structural gates ----
+
+    // FMTT_MAGIC at meta[4..19]
+    static const std::uint8_t FmttMagic[16] = {
+        ' ','L','V','M','2',' ','x','[',
+        '5','A','%','r','0','N','*','>'
     };
-    std::memcpy(Label, LabelMagic, 8);
+    std::memcpy(Meta + 4, FmttMagic, 16);            // +0x04
+    WriteLE32(Meta + 0x14, 1);                        // version = 1
+    WriteLE64(Meta + 0x18, 0);                        // Start
+    WriteLE64(Meta + 0x20, SectorSize);               // Size
 
-    // [+8]  sector_xl = 1  (LE u64)
-    WriteLE64(Label + 8, 1);
+    // raw_locn[0] at meta+0x28: points to VG config text.
+    WriteLE64(Meta + 0x28, VgConfigOffset);           // Offset
+    WriteLE64(Meta + 0x30, VgConfigSize);             // Size
+    // Checksum filled below after VG config CRC is computed.
+    WriteLE32(Meta + 0x3C, 0);                        // Flags
 
-    // [+20] offsetToCont = 32  (LE u32)
-    WriteLE32(Label + 20, 32);
+    // raw_locn terminator at meta+0x40 (24 zero bytes).
+    std::memset(Meta + 0x40, 0, 0x18);
 
-    // [+24] "LVM2 001"
-    static const std::uint8_t Lvm2Magic[8] = {
-        'L','V','M','2',' ','0','0','1'
-    };
-    std::memcpy(Label + 24, Lvm2Magic, 8);
+    // ---- Recompute all three CRC layers (inside-out) ----
 
-    // --- 2. Terminate data disk_locn list immediately (label+72) ---
-    //     so metadata disk_locn is at the known position label+88.
-    //     PV header: +32 id(32) +64 device_size(8) +72 data_disk_locn[0]
-    std::memset(Label + 72, 0, 16);   // {offset=0, size=0} -> break
+    // 1. VG config CRC -> raw_locn[0].Checksum
+    std::uint32_t VgCrc = CrcUpdate(
+        LvmCrcInit, Meta + VgConfigOffset, VgConfigSize);
+    WriteLE32(Meta + 0x38, VgCrc);
 
-    // --- 3. Cap metadata disk_locn size (label+96) to MaxMetaSize ---
-    //     The handler does meta.Alloc(size) with no bounds check; without
-    //     this cap, every mutated input triggers a multi-TB OOM crash.
-    {
-        std::uint64_t MetaSize = ReadLE64(Label + 96);
-        if (MetaSize > MaxMetaSize)
-            WriteLE64(Label + 96, MetaSize % (MaxMetaSize + 1));
-    }
+    // 2. Metadata header CRC -> meta[0..3]
+    std::uint32_t MetaCrc = CrcUpdate(
+        LvmCrcInit, Meta + 4, SectorSize - 4);
+    WriteLE32(Meta, MetaCrc);
 
-    // --- 4. Recompute CRC over bytes [+20 .. +511] ---
-    std::uint32_t Crc = CrcUpdate(LvmCrcInit, Label + 20, SectorSize - 20);
-    WriteLE32(Label + 16, Crc);
+    // 3. Label sector CRC -> label[16..19]
+    std::uint32_t LabelCrc = CrcUpdate(
+        LvmCrcInit, Label + 20, SectorSize - 20);
+    WriteLE32(Label + 16, LabelCrc);
 
     return NewSize;
 }
